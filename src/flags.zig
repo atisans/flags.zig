@@ -44,7 +44,7 @@ pub fn string(name: []const u8, value: []const u8, description: []const u8) []co
         };
     }
 
-    _ = entries.put(name, .{ .value = .{ .boolean = value }, .description = description }) catch unreachable;
+    _ = entries.put(name, .{ .value = .{ .string = value }, .description = description }) catch unreachable;
     return value;
 }
 
