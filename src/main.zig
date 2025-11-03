@@ -1,5 +1,4 @@
 const std = @import("std");
-
 const flags = @import("flags");
 
 pub fn main() !void {
