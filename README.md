@@ -4,21 +4,21 @@ A comprehensive command-line flag parser for Zig, inspired by Go's `flags` packa
 
 ## Features
 
-- ✅ Multiple flag types (bool, string, int, float, duration)
-- ✅ Automatic help generation (`-h`, `-help`)
-- ✅ Positional arguments support
-- ✅ Short flag names (`-v`)
-- ✅ Flag sets for subcommands
-- ✅ Custom flag types via `Value` interface
-- ✅ Configurable error handling
-- ✅ Environment variable integration (planned)
-- ✅ Configuration file support (planned)
+- [ ] Multiple flag types (bool, string, int, float, duration)
+- [ ] Automatic help generation (`-h`, `-help`)
+- [ ] Positional arguments support
+- [ ] Short flag names (`-v`)
+- [ ] Flag sets for subcommands
+- [ ] Custom flag types via `Value` interface
+- [ ] Configurable error handling
+- [ ] Environment variable integration (planned)
+- [ ] Configuration file support (planned)
 
 ## Installation
 
 fetch library
 ```bash
-zig fetch https://github.com/<username>/flags.zig/archive/main.tar.gz --name=flags
+zig fetch https://github.com/atisans/flags.zig/archive/main.tar.gz --name=flags
 ```
 
 or add to your `build.zig.zon`:
@@ -26,7 +26,7 @@ or add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .flags = .{
-        .url = "https://github.com/<username>/flags.zig/archive/main.tar.gz",
+        .url = "https://github.com/atisans/flags.zig/archive/main.tar.gz",
         .hash = "...",
     },
 },
