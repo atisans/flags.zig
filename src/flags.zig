@@ -2,11 +2,14 @@ const std = @import("std");
 
 const Self = @This();
 
+const FlagValues = union(enum) {
+    boolean: bool,
+    string: []const u8,
+    int: i32,
+};
+
 const Flag = struct {
-    value: union(enum) {
-        boolean: bool,
-        string: []const u8,
-    },
+    value: FlagValues,
     description: []const u8 = "",
 };
 
@@ -24,7 +27,14 @@ pub fn parse() !void {
             var it = std.mem.splitScalar(u8, trimmed, '=');
             const key = it.first();
             const value = it.rest();
-            try entries.put(key, .{ .value = .{ .string = value } });
+
+            const is_int = std.fmt.parseInt(i32, value, 10) catch 0;
+
+            if (is_int == 0) {
+                try entries.put(key, .{ .value = .{ .string = value } });
+            }
+
+            try entries.put(key, .{ .value = .{ .int = is_int } });
         } else {
             try entries.put(trimmed, .{ .value = .{ .boolean = true } });
         }
@@ -62,5 +72,22 @@ pub fn boolean(name: []const u8, value: bool, description: []const u8) bool {
     }
 
     _ = entries.put(name, .{ .value = .{ .boolean = value }, .description = description }) catch unreachable;
+    return value;
+}
+
+pub fn int(name: []const u8, value: i32, description: []const u8) i32 {
+    if (entries.get(name)) |found| {
+        var updated = found;
+        updated.description = description;
+
+        _ = entries.put(name, updated) catch unreachable;
+
+        return switch (updated.value) {
+            .int => |v| return v,
+            else => return value,
+        };
+    }
+
+    _ = entries.put(name, .{ .value = .{ .int = value }, .description = description }) catch unreachable;
     return value;
 }
