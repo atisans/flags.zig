@@ -32,9 +32,9 @@ pub fn parse() !void {
 
             if (is_int == 0) {
                 try entries.put(key, .{ .value = .{ .string = value } });
+            } else {
+                try entries.put(key, .{ .value = .{ .int = is_int } });
             }
-
-            try entries.put(key, .{ .value = .{ .int = is_int } });
         } else {
             try entries.put(trimmed, .{ .value = .{ .boolean = true } });
         }
