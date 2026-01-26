@@ -5,7 +5,6 @@ const Self = @This();
 const FlagValues = union(enum) {
     boolean: bool,
     string: []const u8,
-    int: i32,
 };
 
 const Flag = struct {
@@ -28,13 +27,7 @@ pub fn parse() !void {
             const key = it.first();
             const value = it.rest();
 
-            const is_int = std.fmt.parseInt(i32, value, 10) catch 0;
-
-            if (is_int == 0) {
-                try entries.put(key, .{ .value = .{ .string = value } });
-            } else {
-                try entries.put(key, .{ .value = .{ .int = is_int } });
-            }
+            try entries.put(key, .{ .value = .{ .string = value } });
         } else {
             try entries.put(trimmed, .{ .value = .{ .boolean = true } });
         }
@@ -75,19 +68,23 @@ pub fn boolean(name: []const u8, value: bool, description: []const u8) bool {
     return value;
 }
 
-pub fn int(name: []const u8, value: i32, description: []const u8) i32 {
+pub fn int(name: []const u8, default: i32, description: ?[]const u8) i32 {
+    _ = description; // autofix
+    // std.debug.assert(std.mem.startsWith(u8, @typeName(@TypeOf(default)), "i"));
+
     if (entries.get(name)) |found| {
-        var updated = found;
-        updated.description = description;
-
-        _ = entries.put(name, updated) catch unreachable;
-
-        return switch (updated.value) {
-            .int => |v| return v,
-            else => return value,
+        return switch (found.value) {
+            .string => |v| {
+                if (std.fmt.parseInt(@TypeOf(default), v, 10)) |parsed| {
+                    return parsed;
+                } else |_| {
+                    std.debug.print("Parsed2: {}\n", .{default});
+                    return default;
+                }
+            },
+            else => return default,
         };
     }
 
-    _ = entries.put(name, .{ .value = .{ .int = value }, .description = description }) catch unreachable;
-    return value;
+    return default;
 }
