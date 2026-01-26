@@ -14,12 +14,8 @@ const Flag = struct {
 
 var entries: std.StringHashMap(Flag) = .init(std.heap.smp_allocator);
 
-pub fn parse() !void {
-    var args = std.process.args();
-    defer args.deinit();
-    _ = args.skip(); // skip the first argument (program name)
-
-    while (args.next()) |arg| {
+pub fn parse(args: []const []const u8) !void {
+    for (args) |arg| {
         const trimmed = std.mem.trimStart(u8, arg, "-"); // trim leading dashes
 
         if (std.mem.indexOfScalar(u8, trimmed, '=') != null) {
