@@ -69,21 +69,11 @@ pub fn boolean(name: []const u8, value: bool, description: []const u8) bool {
 }
 
 pub fn int(name: []const u8, default: i32, description: ?[]const u8) i32 {
-    _ = description; // autofix
+    _ = description;
     // std.debug.assert(std.mem.startsWith(u8, @typeName(@TypeOf(default)), "i"));
 
     if (entries.get(name)) |found| {
-        return switch (found.value) {
-            .string => |v| {
-                if (std.fmt.parseInt(@TypeOf(default), v, 10)) |parsed| {
-                    return parsed;
-                } else |_| {
-                    std.debug.print("Parsed2: {}\n", .{default});
-                    return default;
-                }
-            },
-            else => return default,
-        };
+        return std.fmt.parseInt(@TypeOf(default), found.value.string, 10) catch default;
     }
 
     return default;
