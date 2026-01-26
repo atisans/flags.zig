@@ -10,7 +10,7 @@ const FlagValues = union(enum) {
 
 const Flag = struct {
     value: FlagValues,
-    description: []const u8 = "",
+    description: ?[]const u8 = null,
 };
 
 var entries: std.StringHashMap(Flag) = .init(std.heap.smp_allocator);
