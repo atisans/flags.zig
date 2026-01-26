@@ -4,15 +4,17 @@ A command-line flag parser for Zig, inspired by Go's `flags` package.
 
 ## Features
 
-- [~] Multiple flag types (bool, string, int, float, duration)
-- [ ] Automatic help generation (`-h`, `-help`)
-- [ ] Positional arguments support
-- [ ] Short flag names (`-v`)
-- [ ] Flag sets for subcommands
-- [ ] Custom flag types via `Value` interface
-- [ ] Configurable error handling
-- [ ] Environment variable integration (planned)
-- [ ] Configuration file support (planned)
+- [x] Multiple flag types (bool, string, int)
+- [x] Argument passing via parse(args)
+- [ ] Float and Duration types - [P1]
+- [ ] Automatic help generation (`-h`, `-help`) - [P1]
+- [ ] Positional arguments support - [P1]
+- [ ] Short flag names (`-v`) - [P2]
+- [ ] Flag sets for subcommands - [P1]
+- [ ] Custom flag types via `Value` interface - [P2]
+- [ ] Configurable error handling - [P1]
+- [ ] Environment variable integration - [P4]
+- [ ] Configuration file support - [P4]
 
 ## Installation
 
@@ -36,9 +38,18 @@ const std = @import("std");
 const flags = @import("flags");
 
 pub fn main() !void {
-    _ = try flags.parse();    // Parse command line
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    // Define flags
+    // Get command-line arguments
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    // Parse flags (skip program name)
+    try flags.parse(args[1..]);
+
+    // Define and retrieve flags
     const name = flags.string("name", "world", "name to greet");
     const age = flags.int("age", 25, "your age");
     const is_active = flags.boolean("active", false, "check if active");
