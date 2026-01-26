@@ -63,3 +63,35 @@ pub fn int(name: []const u8, default: i32, description: ?[]const u8) i32 {
 
     return default;
 }
+
+test "test flags parse string" {
+    entries.clearAndFree();
+
+    _ = try parse(&.{"--name=jack"});
+    const name = string("name", "joe", "A name of the user");
+    try std.testing.expect(std.mem.eql(u8, name, "jack"));
+}
+
+test "test flags parse boolean" {
+    entries.clearAndFree();
+
+    _ = try parse(&.{"--active"});
+    const is_active = boolean("active", false, "Check is user is active");
+    try std.testing.expect(is_active == true);
+}
+
+test "test flags parse int" {
+    entries.clearAndFree();
+
+    _ = try parse(&.{"--port=8080"});
+    const port = int("port", 5000, "The port to use");
+    try std.testing.expect(port == 8080);
+}
+
+test "test flags parse int using default" {
+    entries.clearAndFree();
+
+    _ = try parse(&.{});
+    const port = int("port", 5000, "The port to use");
+    try std.testing.expect(port == 5000);
+}
