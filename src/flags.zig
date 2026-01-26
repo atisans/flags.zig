@@ -34,38 +34,27 @@ pub fn parse() !void {
     }
 }
 
-pub fn string(name: []const u8, value: []const u8, description: []const u8) []const u8 {
+pub fn string(name: []const u8, default: []const u8, description: ?[]const u8) []const u8 {
+    _ = description;
+
     if (entries.get(name)) |found| {
-        var updated = found;
-        updated.description = description;
-
-        _ = entries.put(name, updated) catch unreachable;
-
-        return switch (updated.value) {
-            .string => |v| return v,
-            else => return value,
-        };
+        return found.value.string;
     }
 
-    _ = entries.put(name, .{ .value = .{ .string = value }, .description = description }) catch unreachable;
-    return value;
+    return default;
 }
 
-pub fn boolean(name: []const u8, value: bool, description: []const u8) bool {
+pub fn boolean(name: []const u8, default: bool, description: ?[]const u8) bool {
+    _ = description;
+
     if (entries.get(name)) |found| {
-        var updated = found;
-        updated.description = description;
-
-        _ = entries.put(name, updated) catch unreachable;
-
-        return switch (updated.value) {
+        return switch (found.value) {
             .boolean => |v| return v,
-            else => return value,
+            else => return default,
         };
     }
 
-    _ = entries.put(name, .{ .value = .{ .boolean = value }, .description = description }) catch unreachable;
-    return value;
+    return default;
 }
 
 pub fn int(name: []const u8, default: i32, description: ?[]const u8) i32 {
