@@ -1,35 +1,35 @@
 # flags.zig
 
-A command-line flag parser for Zig, inspired by Go's `flags` package.
+A command-line flag parser for Zig. Define flags using a struct and parse command-line arguments into it.
 
 ## Features
 
-- [x] Multiple flag types (bool, string, int)
-- [x] Argument passing via parse(args)
-- [ ] Float and Duration types - [P1]
-- [ ] Automatic help generation (`-h`, `-help`) - [P1]
+- [x] Multiple flag types (bool, string, int, float)
+- [x] Struct-based argument definition
+- [x] Default values via struct fields
+- [x] Automatic help generation (`--help`)
+- [x] Error handling for invalid/unknown flags
 - [ ] Positional arguments support - [P1]
 - [ ] Short flag names (`-v`) - [P2]
+- [ ] Duration type - [P1]
 - [ ] Flag sets for subcommands - [P1]
 - [ ] Custom flag types via `Value` interface - [P2]
-- [ ] Configurable error handling - [P1]
 - [ ] Environment variable integration - [P4]
 - [ ] Configuration file support - [P4]
 
 ## Installation
 
-fetch library
+Fetch library:
 ```bash
 zig fetch --save git+https://github.com/atisans/flags.zig
 ```
 
-and add to your `build.zig`:
+Add to your `build.zig`:
 
 ```zig
 const flags = b.dependency("flags", .{});
 exe.root_module.addImport("flags", flags.module("flags"));
 ```
-
 
 ## Basic Usage
 
@@ -46,16 +46,18 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    // Parse flags (skip program name)
-    try flags.parse(args[1..]);
+    // Define flags as a struct
+    const Args = struct {
+        name: []const u8 = "world",
+        age: u32 = 25,
+        active: bool = false,
+    };
 
-    // Define and retrieve flags
-    const name = flags.string("name", "world", "name to greet");
-    const age = flags.int("age", 25, "your age");
-    const is_active = flags.boolean("active", false, "check if active");
+    // Parse flags into the struct
+    const parsed = try flags.parse(allocator, Args, args);
 
-    // Use the values
-    std.debug.print("Hello {s}! Age: {d}, Active: {}\n", .{name, age, is_active});
+    // Use the parsed values
+    std.debug.print("Hello {s}! Age: {d}, Active: {}\n", .{ parsed.name, parsed.age, parsed.active });
 }
 ```
 
@@ -63,14 +65,35 @@ pub fn main() !void {
 
 ```bash
 # Basic usage
-./program -name=alice -age=30 -active
+./program --name=alice --age=30 --active
 
-# Short flags (when implemented)
-./program -n alice -a 30 -a
+# String flag
+./program --name=bob
 
-# Help (when implemented)
-./program -h # or (--help)
+# Integer flag
+./program --age=40
 
-# With positional arguments (when implemented)
-./program -name=bob file1.txt file2.txt
+# Boolean flag (no value needed)
+./program --active
+
+# Help
+./program --help
+
+# Mixed flags
+./program --name=charlie --age=35 --active
 ```
+
+## Supported Types
+
+- `bool` - Boolean flags (presence = true, or `--flag=true/false`)
+- `[]const u8` - String values
+- `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64` - Integer values
+- `f32`, `f64` - Floating-point values
+
+## Error Handling
+
+The parser returns errors for:
+- `error.InvalidArgument` - Non-flag argument found
+- `error.UnknownFlag` - Flag not defined in struct
+- `error.MissingValue` - Flag requires a value but none provided
+- `error.InvalidValue` - Value cannot be parsed (e.g., non-integer for int flag)
