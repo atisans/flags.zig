@@ -28,16 +28,30 @@ const Flags = struct {
     }
 
     pub fn parse(self: *Self, args: []const []const u8) !void {
-        for (args) |arg| {
+        var i: usize = 0;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
             const trimmed = std.mem.trimStart(u8, arg, "-"); // trim leading dashes
 
             if (std.mem.indexOfScalar(u8, trimmed, '=') != null) {
                 var it = std.mem.splitScalar(u8, trimmed, '=');
-                const key = it.first();
-                const value = it.rest();
+                const key = std.mem.trim(u8, it.first(), " \t");
+                var value = std.mem.trim(u8, it.rest(), " \t");
+
+                // Handle --key= value (value is next arg)
+                if (value.len == 0 and i + 1 < args.len) {
+                    value = args[i + 1];
+                    i += 1;
+                }
 
                 try self.entries.put(key, .{ .value = .{ .string = value } });
+            } else if (i + 2 < args.len and std.mem.eql(u8, args[i + 1], "=")) {
+                // Handle --key = value
+                const value = args[i + 2];
+                try self.entries.put(trimmed, .{ .value = .{ .string = value } });
+                i += 2;
             } else {
+                // --key (boolean)
                 try self.entries.put(trimmed, .{ .value = .{ .boolean = true } });
             }
         }
