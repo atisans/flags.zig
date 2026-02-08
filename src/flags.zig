@@ -22,18 +22,18 @@ pub const Error = error{
 };
 
 // Parse args into a struct (single command) or union(enum) (subcommands).
-pub fn parse(args: []const []const u8, comptime args_type: type) !args_type {
+pub fn parse(args: []const []const u8, comptime Args: type) !Args {
     if (args.len == 0) return Error.InvalidArgument;
-    const info = @typeInfo(args_type);
+    const info = @typeInfo(Args);
     switch (info) {
-        .@"struct" => return parse_flags(args, args_type, 1),
+        .@"struct" => return parse_flags(args, Args, 1),
         .@"union" => {
             if (info.@"union".tag_type == null) {
-                @compileError("args_type must be a union(enum) to use subcommands");
+                @compileError("Args must be a union(enum) to use subcommands");
             }
-            return parse_commands(args, args_type, 1);
+            return parse_commands(args, Args, 1);
         },
-        else => @compileError("args_type must be a struct or union(enum)"),
+        else => @compileError("Args must be a struct or union(enum)"),
     }
 }
 
@@ -257,72 +257,29 @@ fn is_help_arg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help");
 }
 
-test "print help" {
-    const allocator = std.testing.allocator;
+// Print help and terminate the process.
+fn print_help_and_exit(comptime Args: type) noreturn {
+    std.debug.print("{s}", .{Args.help});
+    std.process.exit(0);
+}
+
+test "help flag without declaration" {
     const Args = struct {
-        name: []const u8 = "def",
-        active: bool = false,
+        name: []const u8 = "joe",
     };
 
-    _ = try parse(allocator, Args, &.{"--help"});
-    try std.testing.expect(true);
+    try std.testing.expectError(Error.UnknownFlag, parse(&.{ "prog", "--help" }, Args));
 }
 
 test "invalid flag" {
-    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8 = "joe",
     };
 
-    const err_union: anyerror!Args = error.InvalidFlag;
-
-    _ = try parse(allocator, Args, &.{"name=jack"});
-    try std.testing.expectError(error.InvalidFlag, err_union);
-}
-
-test "parse string" {
-    const allocator = std.testing.allocator;
-    const Args = struct {
-        name: []const u8 = "joe",
-    };
-
-    const flags = try parse(allocator, Args, &.{"--name=jack"});
-    try std.testing.expect(std.mem.eql(u8, flags.name, "jack"));
-}
-
-test "parse boolean" {
-    const allocator = std.testing.allocator;
-    const Args = struct {
-        name: []const u8 = "joe",
-        active: bool = false,
-    };
-
-    const flags = try parse(allocator, Args, &.{ "--name=jack", "--active" });
-    try std.testing.expect(flags.active == true);
-}
-
-test "parse int" {
-    const allocator = std.testing.allocator;
-    const Args = struct {
-        port: u16 = 5000,
-    };
-
-    const flags = try parse(allocator, Args, &.{"--port=8080"});
-    try std.testing.expect(flags.port == 8080);
-}
-
-test "parse float" {
-    const allocator = std.testing.allocator;
-    const Args = struct {
-        rate: f32 = 1.0,
-    };
-
-    const flags = try parse(allocator, Args, &.{"--rate=1.0"});
-    try std.testing.expect(flags.rate == 1.0);
+    try std.testing.expectError(Error.UnexpectedArgument, parse(&.{ "prog", "name=jack" }, Args));
 }
 
 test "parse defaults" {
-    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8 = "joe",
         active: bool = false,
@@ -330,9 +287,267 @@ test "parse defaults" {
         rate: f32 = 1.0,
     };
 
-    const flags = try parse(allocator, Args, &.{});
+    const flags = try parse(&.{"prog"}, Args);
     try std.testing.expect(std.mem.eql(u8, flags.name, "joe"));
     try std.testing.expect(flags.active == false);
     try std.testing.expect(flags.port == 5000);
     try std.testing.expect(flags.rate == 1.0);
+}
+
+test "parse primitives" {
+    // Consolidated primitive types test
+    const Args = struct {
+        name: []const u8 = "default",
+        port: u16 = 8080,
+        rate: f32 = 1.0,
+        active: bool = false,
+    };
+
+    const flags = try parse(&.{ "prog", "--name=test", "--port=9090", "--rate=2.5", "--active" }, Args);
+    try std.testing.expect(std.mem.eql(u8, flags.name, "test"));
+    try std.testing.expect(flags.port == 9090);
+    try std.testing.expect(flags.rate == 2.5);
+    try std.testing.expect(flags.active == true);
+}
+
+test "parse enum" {
+    const Format = enum { json, yaml, toml };
+    const Args = struct {
+        format: Format = .json,
+    };
+
+    const flags = try parse(&.{ "prog", "--format=yaml" }, Args);
+    try std.testing.expect(flags.format == .yaml);
+}
+
+test "parse enum with default" {
+    const Format = enum { json, yaml, toml };
+    const Args = struct {
+        format: Format = .json,
+    };
+
+    const flags = try parse(&.{"prog"}, Args);
+    try std.testing.expect(flags.format == .json);
+}
+
+test "parse optional string" {
+    const Args = struct {
+        config: ?[]const u8 = null,
+    };
+
+    const flags1 = try parse(&.{"prog"}, Args);
+    try std.testing.expect(flags1.config == null);
+
+    const flags2 = try parse(&.{ "prog", "--config=/path/to/config" }, Args);
+    try std.testing.expect(flags2.config != null);
+    try std.testing.expect(std.mem.eql(u8, flags2.config.?, "/path/to/config"));
+}
+
+test "parse optional int" {
+    const Args = struct {
+        count: ?u32 = null,
+    };
+
+    const flags1 = try parse(&.{"prog"}, Args);
+    try std.testing.expect(flags1.count == null);
+
+    const flags2 = try parse(&.{ "prog", "--count=42" }, Args);
+    try std.testing.expect(flags2.count != null);
+    try std.testing.expect(flags2.count.? == 42);
+}
+
+test "parse optional bool" {
+    const Args = struct {
+        verbose: ?bool = null,
+    };
+
+    const flags1 = try parse(&.{"prog"}, Args);
+    try std.testing.expect(flags1.verbose == null);
+
+    const flags2 = try parse(&.{ "prog", "--verbose" }, Args);
+    try std.testing.expect(flags2.verbose != null);
+    try std.testing.expect(flags2.verbose.? == true);
+}
+
+test "parse boolean formats" {
+    // Enhanced boolean parsing test
+    const Args = struct {
+        flag: bool = false,
+    };
+
+    // Presence = true
+    const flags1 = try parse(&.{ "prog", "--flag" }, Args);
+    try std.testing.expect(flags1.flag == true);
+
+    // Explicit true/false
+    const flags2 = try parse(&.{ "prog", "--flag=true" }, Args);
+    try std.testing.expect(flags2.flag == true);
+
+    const flags3 = try parse(&.{ "prog", "--flag=false" }, Args);
+    try std.testing.expect(flags3.flag == false);
+
+    // 1/0 format
+    const flags4 = try parse(&.{ "prog", "--flag=1" }, Args);
+    try std.testing.expect(flags4.flag == true);
+
+    const flags5 = try parse(&.{ "prog", "--flag=0" }, Args);
+    try std.testing.expect(flags5.flag == false);
+}
+
+test "parse subcommand" {
+    const CLI = union(enum) {
+        start: struct {
+            host: []const u8 = "localhost",
+            port: u16 = 8080,
+        },
+        stop: struct {
+            force: bool = false,
+        },
+    };
+
+    const result1 = try parse(&.{ "prog", "start", "--host=0.0.0.0", "--port=3000" }, CLI);
+    try std.testing.expect(std.mem.eql(u8, result1.start.host, "0.0.0.0"));
+    try std.testing.expect(result1.start.port == 3000);
+
+    const result2 = try parse(&.{ "prog", "stop", "--force" }, CLI);
+    try std.testing.expect(result2.stop.force == true);
+}
+
+test "parse subcommand with defaults" {
+    const CLI = union(enum) {
+        start: struct {
+            host: []const u8 = "localhost",
+            port: u16 = 8080,
+        },
+        stop: struct {},
+    };
+
+    const result = try parse(&.{ "prog", "start" }, CLI);
+    try std.testing.expect(std.mem.eql(u8, result.start.host, "localhost"));
+    try std.testing.expect(result.start.port == 8080);
+}
+
+test "missing subcommand" {
+    const CLI = union(enum) {
+        start: struct {
+            host: []const u8 = "localhost",
+        },
+        stop: struct {
+            force: bool = false,
+        },
+    };
+
+    try std.testing.expectError(Error.MissingSubcommand, parse(&.{"prog"}, CLI));
+}
+
+test "unknown subcommand" {
+    const CLI = union(enum) {
+        start: struct {
+            host: []const u8 = "localhost",
+        },
+        stop: struct {
+            force: bool = false,
+        },
+    };
+
+    try std.testing.expectError(Error.UnknownSubcommand, parse(&.{ "prog", "restart" }, CLI));
+}
+
+test "duplicate flag" {
+    const Args = struct {
+        port: u16 = 8080,
+    };
+
+    try std.testing.expectError(Error.DuplicateFlag, parse(&.{ "prog", "--port=8080", "--port=9090" }, Args));
+}
+
+test "missing value" {
+    const Args = struct {
+        name: []const u8,
+    };
+
+    try std.testing.expectError(Error.MissingValue, parse(&.{ "prog", "--name" }, Args));
+}
+
+test "invalid enum value" {
+    const Format = enum { json, yaml, toml };
+    const Args = struct {
+        format: Format = .json,
+    };
+
+    try std.testing.expectError(Error.InvalidValue, parse(&.{ "prog", "--format=xml" }, Args));
+}
+
+test "invalid int value" {
+    const Args = struct {
+        port: u16 = 8080,
+    };
+
+    try std.testing.expectError(Error.InvalidValue, parse(&.{ "prog", "--port=not-a-number" }, Args));
+}
+
+test "no args provided" {
+    const Args = struct {
+        port: u16 = 8080,
+    };
+
+    try std.testing.expectError(Error.InvalidArgument, parse(&.{}, Args));
+}
+
+test "missing required flag" {
+    const Args = struct {
+        name: []const u8,
+    };
+
+    try std.testing.expectError(Error.MissingRequiredFlag, parse(&.{"prog"}, Args));
+}
+
+test "help declaration exists" {
+    const Args = struct {
+        verbose: bool = false,
+        pub const help = "Test help message";
+    };
+
+    // Verify help declaration is accessible
+    try std.testing.expect(@hasDecl(Args, "help"));
+    try std.testing.expect(std.mem.eql(u8, Args.help, "Test help message"));
+}
+
+test "complex subcommand structure" {
+    const CLI = union(enum) {
+        server: union(enum) {
+            start: struct {
+                host: []const u8 = "0.0.0.0",
+                port: u16 = 8080,
+            },
+            stop: struct {
+                force: bool = false,
+            },
+            pub const help = "Server commands";
+        },
+        client: struct {
+            url: []const u8,
+            timeout: u32 = 30,
+        },
+    };
+
+    const result = try parse(&.{ "prog", "server", "start", "--port=9090" }, CLI);
+    switch (result) {
+        .server => |s| switch (s) {
+            .start => |start| {
+                try std.testing.expect(std.mem.eql(u8, start.host, "0.0.0.0"));
+                try std.testing.expect(start.port == 9090);
+            },
+            else => unreachable,
+        },
+        else => unreachable,
+    }
+}
+
+test "unexpected argument error" {
+    const Args = struct {
+        port: u16 = 8080,
+    };
+
+    try std.testing.expectError(Error.UnexpectedArgument, parse(&.{ "prog", "--port=8080", "extra" }, Args));
 }
