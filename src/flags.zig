@@ -1,7 +1,7 @@
 /// Comptime-first CLI parser with typed flags, positional args, and subcommands.
 const std = @import("std");
 
-// Public error set for parse failures.
+/// Public error set for parse failures.
 pub const Error = error{
     DuplicateFlag,
     InvalidArgument,
@@ -15,24 +15,27 @@ pub const Error = error{
     UnexpectedArgument,
 };
 
-// Parse args into a struct (single command) or union(enum) (subcommands).
+/// Parse args into a struct (single command) or union(enum) (subcommands).
+///
+/// Caller passes full argv; the parser skips argv[0] (the program name).
 pub fn parse(args: []const []const u8, comptime T: type) !T {
     if (args.len == 0) return Error.InvalidArgument;
+    const trimmed = args[1..];
     const info = @typeInfo(T);
     switch (info) {
-        .@"struct" => return parse_flags(args, T, 1),
+        .@"struct" => return parse_struct(trimmed, T),
         .@"union" => {
             if (info.@"union".tag_type == null) {
                 @compileError("Args must be a union(enum) to use subcommands");
             }
-            return parse_commands(args, T, 1);
+            return parse_commands(trimmed, T);
         },
         else => @compileError("Args must be a struct or union(enum)"),
     }
 }
 
-// Fill a field with its default value or null if optional, else return error.
-fn fill_field_default(comptime field: std.builtin.Type.StructField, result: anytype, comptime error_type: Error) !void {
+/// Apply default value or null for optional fields, otherwise return the given error.
+fn apply_default(comptime field: std.builtin.Type.StructField, result: anytype, comptime error_type: Error) !void {
     if (field.defaultValue()) |default| {
         @field(result, field.name) = default;
     } else if (comptime is_optional(field.type)) {
@@ -42,25 +45,24 @@ fn fill_field_default(comptime field: std.builtin.Type.StructField, result: anyt
     }
 }
 
-// Find the '@"--"' marker separating flags from positionals.
-fn marker_index(comptime fields: []const std.builtin.Type.StructField) ?usize {
-    var marker_idx: ?usize = null;
+/// Find the index of the '@"--"' field that separates flags from positionals.
+fn separator_index(comptime fields: []const std.builtin.Type.StructField) ?usize {
+    var idx: ?usize = null;
     inline for (fields, 0..) |field, index| {
         if (std.mem.eql(u8, field.name, "--")) {
-            marker_idx = index;
+            idx = index;
             break;
         }
     }
-    return marker_idx;
+    return idx;
 }
 
-// Parse a struct of flags and optional positional args.
-fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !T {
+/// Parse a struct schema of named flags and optional positional args.
+fn parse_struct(args: []const []const u8, comptime T: type) !T {
     comptime assert_struct(T);
 
     const fields = std.meta.fields(T);
-    // '@"--"' marks the boundary between flags and positional args.
-    const marker_idx = comptime marker_index(fields);
+    const marker_idx = comptime separator_index(fields);
     const named_fields = if (marker_idx) |idx| fields[0..idx] else fields;
     const positional_fields = if (marker_idx) |idx| fields[idx + 1 ..] else &[_]std.builtin.Type.StructField{};
 
@@ -71,13 +73,11 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
     }
 
     var result: T = undefined;
-    // Track usage to enforce no duplicates.
     var counts = std.mem.zeroes([named_fields.len]u8);
     var positional_index: usize = 0;
-    // Once a positional value appears, remaining args are positional-only.
     var positional_only = false;
 
-    var i: usize = start_index;
+    var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
 
@@ -85,7 +85,6 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
             print_help(T);
         }
 
-        // Explicit separator for positional arguments.
         if (std.mem.eql(u8, arg, "--")) {
             if (positional_fields.len == 0) {
                 return Error.UnexpectedArgument;
@@ -112,7 +111,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
                     if (counts[field_index] > 0) return Error.DuplicateFlag;
 
                     counts[field_index] += 1;
-                    @field(result, field.name) = try parse_flag_value(field.type, flag_value);
+                    @field(result, field.name) = try parse_value(field.type, flag_value);
                     break;
                 }
             }
@@ -124,7 +123,6 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
         // Handle short flags (-v, -p, etc).
         if (std.mem.startsWith(u8, arg, "-") and !positional_only) {
             if (arg.len == 2) {
-                // Single char flag like -v
                 const flag_char = arg[1..2];
                 var found = false;
                 inline for (named_fields, 0..) |field, field_index| {
@@ -132,7 +130,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
                         found = true;
                         if (counts[field_index] > 0) return Error.DuplicateFlag;
                         counts[field_index] += 1;
-                        @field(result, field.name) = try parse_flag_value(field.type, null);
+                        @field(result, field.name) = try parse_value(field.type, null);
                         break;
                     }
                 }
@@ -140,7 +138,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
                 continue;
             }
         }
-        
+
         if (std.mem.startsWith(u8, arg, "-")) return Error.UnexpectedArgument;
 
         if (positional_fields.len == 0) return Error.UnexpectedArgument;
@@ -148,41 +146,41 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
         if (positional_index >= positional_fields.len) return Error.UnexpectedArgument;
 
         const field = positional_fields[positional_index];
-        @field(result, field.name) = try parse_flag_value(field.type, arg);
+        @field(result, field.name) = try parse_value(field.type, arg);
         positional_index += 1;
         positional_only = true;
     }
 
-    // Fill in defaults and validate required flags.
+    // Apply defaults and validate required flags.
     inline for (named_fields, 0..) |field, field_index| {
         if (counts[field_index] == 0) {
-            try fill_field_default(field, &result, Error.MissingRequiredFlag);
+            try apply_default(field, &result, Error.MissingRequiredFlag);
         }
     }
 
-    // Fill missing positional args from defaults or optional values.
+    // Apply defaults for missing positional args.
     if (positional_fields.len > 0) {
         inline for (positional_fields[positional_index..]) |field| {
-            try fill_field_default(field, &result, Error.MissingRequiredPositional);
+            try apply_default(field, &result, Error.MissingRequiredPositional);
         }
     }
 
     return result;
 }
 
-// Handle optional wrappers before parsing the concrete type.
-fn parse_flag_value(comptime T: type, value: ?[]const u8) !T {
+/// Unwrap optional types before parsing the inner scalar value.
+fn parse_value(comptime T: type, value: ?[]const u8) !T {
     return switch (@typeInfo(T)) {
         .optional => |opt| blk: {
-            const parsed = try parse_scalar_value(opt.child, value);
+            const parsed = try parse_scalar(opt.child, value);
             break :blk @as(T, parsed);
         },
-        else => parse_scalar_value(T, value),
+        else => parse_scalar(T, value),
     };
 }
 
-// Parse supported scalar types (bool, int, float, enum, string).
-fn parse_scalar_value(comptime T: type, value: ?[]const u8) !T {
+/// Parse a scalar type: bool, int, float, enum, or string.
+fn parse_scalar(comptime T: type, value: ?[]const u8) !T {
     if (T == bool) {
         if (value == null) return true;
         return parse_bool(value.?);
@@ -201,44 +199,44 @@ fn parse_scalar_value(comptime T: type, value: ?[]const u8) !T {
     }
 }
 
-// Accept true/false only.
+/// Parse a boolean string value; accepts "true" or "false" only.
 fn parse_bool(value: []const u8) Error!bool {
     if (std.mem.eql(u8, value, "true")) return true;
     if (std.mem.eql(u8, value, "false")) return false;
     return Error.InvalidValue;
 }
 
-// Dispatch and parse a subcommand (struct or union).
-fn dispatch_subcommand(comptime field: std.builtin.Type.UnionField, args: []const []const u8, start_index: usize) !field.type {
+/// Parse a subcommand field as either a struct or nested union(enum).
+fn parse_subcommand(comptime field: std.builtin.Type.UnionField, args: []const []const u8) !field.type {
     const subcommand_info = @typeInfo(field.type);
     return switch (subcommand_info) {
-        .@"struct" => try parse_flags(args, field.type, start_index + 1),
+        .@"struct" => try parse_struct(args, field.type),
         .@"union" => blk: {
             if (subcommand_info.@"union".tag_type == null) {
                 @compileError("subcommand types must be struct or union(enum)");
             }
-            break :blk try parse_commands(args, field.type, start_index + 1);
+            break :blk try parse_commands(args, field.type);
         },
         else => @compileError("subcommand types must be struct or union(enum)"),
     };
 }
 
-// Dispatch to the matching subcommand and parse its arguments.
-fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize) !T {
+/// Match and parse the first arg as a subcommand name, then parse the rest.
+fn parse_commands(args: []const []const u8, comptime T: type) !T {
     const fields = std.meta.fields(T);
 
-    if (args.len <= start_index) {
+    if (args.len == 0) {
         return Error.MissingSubcommand;
     }
 
-    const arg = args[start_index];
+    const arg = args[0];
     if (is_help_arg(arg)) {
         print_help(T);
     }
 
     inline for (fields) |field| {
         if (std.mem.eql(u8, arg, field.name)) {
-            const parsed = try dispatch_subcommand(field, args, start_index);
+            const parsed = try parse_subcommand(field, args[1..]);
             return @unionInit(T, field.name, parsed);
         }
     }
@@ -246,14 +244,14 @@ fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize
     return Error.UnknownSubcommand;
 }
 
-// Ensure the schema is a struct at compile time.
+/// Ensure the given type is a struct at compile time.
 fn assert_struct(comptime T: type) void {
     if (@typeInfo(T) != .@"struct") {
         @compileError("flag definitions must be a struct");
     }
 }
 
-// Detect optional types so we can accept missing values.
+/// Check whether a type is an optional.
 fn is_optional(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .optional => true,
@@ -261,22 +259,24 @@ fn is_optional(comptime T: type) bool {
     };
 }
 
-// Centralized help flag check.
+/// Return true if the argument is a help flag (-h or --help).
 fn is_help_arg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help");
 }
 
-// Print help and terminate the process.
+/// Print help text and exit. Uses a user-declared help string if available,
+/// otherwise generates help from the type schema.
 fn print_help(comptime T: type) noreturn {
     if (@hasDecl(T, "help")) {
         std.debug.print("{s}", .{T.help});
     } else {
-        print_auto_help(T);
+        print_generated_help(T);
     }
     std.process.exit(0);
 }
 
-fn print_auto_help(comptime T: type) void {
+/// Generate and print help text from the struct/union type schema.
+fn print_generated_help(comptime T: type) void {
     const info = @typeInfo(T);
     switch (info) {
         .@"struct" => {
@@ -336,7 +336,6 @@ test "auto help generation" {
     };
 
     try std.testing.expect(@hasDecl(Args, "help") == false);
-    // Auto help should be triggered on --help
 }
 
 test "invalid flag" {
@@ -363,7 +362,6 @@ test "parse defaults" {
 }
 
 test "parse primitives" {
-    // Consolidated primitive types test
     const Args = struct {
         name: []const u8 = "default",
         port: u16 = 8080,
@@ -438,16 +436,13 @@ test "parse optional bool" {
 }
 
 test "parse boolean formats" {
-    // Enhanced boolean parsing test
     const Args = struct {
         flag: bool = false,
     };
 
-    // Presence = true
     const flags1 = try parse(&.{ "prog", "--flag" }, Args);
     try std.testing.expect(flags1.flag == true);
 
-    // Explicit true/false
     const flags2 = try parse(&.{ "prog", "--flag=true" }, Args);
     try std.testing.expect(flags2.flag == true);
 
@@ -569,7 +564,6 @@ test "help declaration exists" {
         pub const help = "Test help message";
     };
 
-    // Verify help declaration is accessible
     try std.testing.expect(@hasDecl(Args, "help"));
     try std.testing.expect(std.mem.eql(u8, Args.help, "Test help message"));
 }
