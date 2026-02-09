@@ -85,7 +85,7 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    const parsed = try flags.parse(allocator, Args, args);
+    const parsed = try flags.parse(args, Args);
 
     std.debug.print("Hello {s}! Age: {d}, Active: {}\n", .{
         parsed.name, parsed.age, parsed.active
@@ -198,7 +198,7 @@ const CLI = union(enum) {
     ;
 };
 
-const cli = try flags.parse(allocator, CLI, args);
+const cli = try flags.parse(args, CLI);
 switch (cli) {
     .start => |s| startServer(s.host, s.port),
     .stop => |s| stopServer(s.force),
