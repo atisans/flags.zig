@@ -10,16 +10,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    if (b.args) |args| {
-        _ = args; // autofix
-    }
-
-    // Creates an executable that will run `test` blocks from the provided module.
-    // Here `mod` needs to define a target, which is why earlier we made sure to
-    // set the releative field.
-    const flags_tests = b.addTest(.{
-        .root_module = flags_mod,
-    });
+    const flags_tests = b.addTest(.{ .root_module = flags_mod });
 
     // A run step that will run the test executable.
     const run_flags_tests = b.addRunArtifact(flags_tests);
