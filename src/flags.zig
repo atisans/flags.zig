@@ -65,7 +65,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
         }
     }
 
-    var result: flags_type = undefined;
+    var result: T = undefined;
     // Track usage to enforce no duplicates.
     var counts = std.mem.zeroes([named_fields.len]u8);
     var positional_index: usize = 0;
