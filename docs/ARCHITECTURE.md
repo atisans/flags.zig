@@ -47,7 +47,7 @@ flags.zig uses a **comptime-first** approach where the CLI schema is defined as 
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Type Parsing                                           │
-│  ├─ bool: --flag or --flag=true/false/1/0              │
+│  ├─ bool: --flag or --flag=true/false                   │
 │  ├─ integers: std.fmt.parseInt()                        │
 │  ├─ floats: std.fmt.parseFloat()                        │
 │  ├─ enums: std.meta.stringToEnum()                      │
@@ -302,7 +302,7 @@ Errors are generated at the appropriate phase:
 
 | Type | Parsing | Example |
 |------|---------|---------|
-| `bool` | Presence or explicit true/false/1/0 | `--verbose` or `--verbose=true` |
+| `bool` | Presence or explicit true/false | `--verbose` or `--verbose=true` |
 | `u8`-`u64` | `std.fmt.parseInt()` | `--port=8080` |
 | `i8`-`i64` | `std.fmt.parseInt()` | `--offset=-10` |
 | `f32`, `f64` | `std.fmt.parseFloat()` | `--rate=0.5` |

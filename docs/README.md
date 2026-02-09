@@ -69,19 +69,6 @@ Complete guide to implementing a Go-like flag parsing library in Zig.
 3. See examples in [EXAMPLES.md](EXAMPLES.md)
 4. Run tests: `zig build test` to verify your changes
 
-## Old Documentation
-
-Previous docs moved to `_archive/` - these are historical references:
-- `_archive/MISSING_FEATURES.md` - Merged into API_SPECIFICATION.md
-- `_archive/architecture_guide.md` - Rewritten as ARCHITECTURE.md
-- `_archive/examples.md` - Moved to EXAMPLES.md
-- `_archive/comparison_with_standards.md` - Merged into REFERENCE.md
-- `docs/CLI_INTEGRATION_GUIDE.md` - **Deleted** (documented non-existent API)
-- `docs/CODE_PATTERNS.md` - **Deleted** (outdated, use EXAMPLES.md instead)
-- `docs/COMPARISON.md` - **Deleted** (merged into REFERENCE.md)
-- `docs/design.md` - **Deleted** (duplicate of DESIGN.md)
-- `docs/ARCHIVE_RECOVERY_REPORT.md` - **Deleted** (internal working doc)
-
 ## Testing Strategy
 
 Each feature should have:

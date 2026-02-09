@@ -10,7 +10,7 @@
 |---------|---------|-----------|-----------------|-----------|-------|
 | **Type System** | | | | | |
 | String type | [x] | [x] | [x] | [x] | `[]const u8` |
-| Boolean type | [x] | [x] | [x] | [x] | `bool` with true/false/1/0 |
+| Boolean type | [x] | [x] | [x] | [x] | `bool` with true/false |
 | Integer types | [x] | [x] | [x] | [x] | `i8`-`i64`, `u8`-`u64` |
 | Float types | [x] | [x] | [x] | [x] | `f32`, `f64` |
 | Optional types | ~ | [x] | [x] | [x] | `?T` for nullable values |

@@ -195,10 +195,10 @@ fn parse_scalar_value(comptime T: type, value: ?[]const u8) !T {
     }
 }
 
-// Accept true/false and 1/0.
+// Accept true/false only.
 fn parse_bool(value: []const u8) Error!bool {
-    if (std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1")) return true;
-    if (std.mem.eql(u8, value, "false") or std.mem.eql(u8, value, "0")) return false;
+    if (std.mem.eql(u8, value, "true")) return true;
+    if (std.mem.eql(u8, value, "false")) return false;
     return Error.InvalidValue;
 }
 
@@ -385,13 +385,6 @@ test "parse boolean formats" {
 
     const flags3 = try parse(&.{ "prog", "--flag=false" }, Args);
     try std.testing.expect(flags3.flag == false);
-
-    // 1/0 format
-    const flags4 = try parse(&.{ "prog", "--flag=1" }, Args);
-    try std.testing.expect(flags4.flag == true);
-
-    const flags5 = try parse(&.{ "prog", "--flag=0" }, Args);
-    try std.testing.expect(flags5.flag == false);
 }
 
 test "parse subcommand" {
