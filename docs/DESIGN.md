@@ -2,7 +2,7 @@
 
 ## Overview
 
-A type-safe, zero-cost command-line argument parser for Zig, synthesizing the best patterns from **Rust clap**, **Python argparse**, and **TigerBeetle's flags** implementation.
+A type-safe, zero-cost command-line argument parser for Zig, inspired by **Rust clap**, **Python argparse**, and **TigerBeetle's flags** implementation.
 
 ## Design Philosophy
 
@@ -24,7 +24,6 @@ A type-safe, zero-cost command-line argument parser for Zig, synthesizing the be
 | **Builder Pattern** | `Arg::new().short('v').long("verbose")` | Struct field declarations with defaults |
 | **Help Generation** | Auto-generated from doc comments | Comptime introspection + optional `help` decls |
 | **Subcommands** | Enum variants with `#[command(subcommand)]` | `union(enum)` types |
-| **Validation** | `value_parser`, `value_enum` | Custom types (planned) |
 
 **Key Insight**: Clap's derive macros are essentially compile-time code generation. Zig's `comptime` makes this native.
 
@@ -36,7 +35,6 @@ A type-safe, zero-cost command-line argument parser for Zig, synthesizing the be
 | **Subparsers** | `add_subparsers()` method | Nested `union(enum)` types |
 | **Type Coercion** | `type=int`, `type=float` | Zig's type system (automatic) |
 | **Help Messages** | `help="description"` | Comptime doc strings or `help` declarations |
-| **Nargs** | `nargs='*'`, `nargs='+'` | Slice types with comptime bounds checking |
 
 **Key Insight**: Argparse's simplicity comes from convention over configuration. Struct defaults provide the same ergonomics.
 
@@ -57,7 +55,7 @@ A type-safe, zero-cost command-line argument parser for Zig, synthesizing the be
 Traditional CLI parsers pass arguments as strings:
 
 ```zig
-// [ ] No compile-time validation
+// No compile-time validation
 const args = try parse(argv, "[]const []const u8");
 ```
 
@@ -104,8 +102,8 @@ switch (cli) {
 **2. Compile-time Type Validation**
 ```zig
 const Args = struct {
-    // Invalid: floats can't be flags (no equality check)
-    threshold: f32 = 0.5,  // Compile error!
+    // Invalid: floats work but be careful with equality
+    threshold: f32 = 0.5,
     
     // Invalid: pointer types need copy strategy
     buffer: *[1024]u8,      // Compile error!
@@ -139,7 +137,7 @@ const CLI = union(enum) {
 const cli = try flags.parse(args, CLI);
 ```
 
-## Help Generation Without Strings
+## Help Generation
 
 ### The Challenge
 
@@ -168,6 +166,8 @@ const Args = struct {
 };
 ```
 
+If no `help` declaration exists, the library auto-generates help from struct fields.
+
 ### Advantages
 
 1. **Comptime Accessible**: Available via `@hasDecl(Args, "help")`
@@ -190,7 +190,7 @@ const Args = struct {
         \\
         \\Examples:
         \\  myapp start --host=0.0.0.0 --port=80
-        \\  myapp start -h
+        \\  myapp start --help
         \\
         \\Exit Codes:
         \\  0  Success
@@ -198,24 +198,6 @@ const Args = struct {
     ;
 };
 ```
-
-### Alternative: Build Step Enhancement
-
-For true doc comment support:
-
-```zig
-// build.zig
-const generate_help = @import("flags_build").generateHelp;
-
-pub fn build(b: *std.Build) void {
-    generate_help(b, "src/main.zig");
-}
-```
-
-**Trade-offs**:
-- [x] True doc comment support
-- [ ] Requires build step integration
-- [ ] More complex tooling
 
 ## Subcommand Design
 
@@ -241,9 +223,9 @@ const CLI = union(enum) {
         list,
         
         pub const help =
-            \\\Manage remote repositories
+            \\Manage remote repositories
             \\
-            \\\Usage: myapp remote <command> [options]
+            \\Usage: myapp remote <command> [options]
         ;
     },
 
@@ -300,8 +282,57 @@ const parsed = try flags.parse(args, Args);
 
 // Custom error handling
 const parsed = flags.parse(args, Args) catch |err| {
-    std.log.err("Parse error: {}", .{err});
+    std.log.err("Parse error: {s}", .{@errorName(err)});
     return;
+};
+```
+
+### Slice Support Examples
+
+#### Basic Slice Usage
+
+```zig
+const Args = struct {
+    files: []const []const u8 = &[_][]const u8{},
+    ports: []u16 = &[_]u16{},
+    tags: []const []const u8 = &[_][]const u8{},
+};
+
+// All equivalent:
+./program --files=a.txt --files=b.txt --files=c.txt
+./program --files a.txt b.txt c.txt  
+./program --files=a.txt,b.txt,c.txt
+```
+
+#### Optional vs Empty Slices
+
+```zig
+const Args = struct {
+    // Required slice - must be provided
+    inputs: []const []const u8,
+    
+    // Optional slice - null vs empty distinction
+    excludes: ?[]const []const u8 = null,
+    
+    // Default empty slice
+    outputs: []const []const u8 = &[_][]const u8{},
+};
+```
+
+#### Slice with Custom Types
+
+```zig
+const LogLevel = enum { debug, info, warn, error };
+const Args = struct {
+    // Slice of enums
+    levels: []const LogLevel = &[_]LogLevel{.info, .warn},
+    
+    // Slice of integers
+    retry_counts: []u32 = &[_]u32{3},
+    
+    // Mixed with other types
+    config: []const []const u8 = &[_][]const u8{"default.conf"},
+    verbose: bool = false,
 };
 
 // Ignore specific errors
@@ -326,15 +357,14 @@ const parsed = flags.parse(args, Args) catch |err| switch (err) {
 
 ### DON'T
 
-1. **Don't** use floats for flags (equality issues)
-2. **Don't** use raw pointers without copy strategy
-3. **Don't** skip error handling
-4. **Don't** make all flags optional (defeats type safety)
-5. **Don't** use runtime string manipulation for help
+1. **Don't** skip error handling
+2. **Don't** make all flags optional (defeats type safety)
+3. **Don't** use runtime string manipulation for help
 
 ## Implementation Status
 
-### Implemented [x]
+### Implemented
+
 - [x] Struct-based flag parsing
 - [x] Basic types (bool, int, float, string)
 - [x] Optional types (?T)
@@ -344,22 +374,61 @@ const parsed = flags.parse(args, Args) catch |err| switch (err) {
 - [x] Help generation via `pub const help`
 - [x] Positional arguments (via `@"--"` marker)
 - [x] Comprehensive error handling
+- [x] Auto-generated help from struct fields
+- [x] Slice support (multiple values per flag)
+- [x] Three parsing patterns: repeated, space-separated, comma-separated
 
-### Planned [~]
-- [ ] Custom types via `parse_flag_value` convention
-- [ ] Short flag names (-v for --verbose)
-- [ ] Space-separated values (-name value)
-- [ ] Validation framework (ranges, choices, required)
-- [ ] Shell completions
-- [ ] Environment variable binding
-- [ ] Config file support
+## Slice Support Architecture
 
-## Future Features
+### Memory Allocation Strategy
 
-- Struct-based help generation (for type-safe, auto-generated help)
-- Per-field documentation
-- Auto-generated examples
-- Exit code documentation
+Slices use **arena-based allocation** for predictable cleanup:
+- Arena allocator created at start of parsing
+- All slice values allocated from the same arena
+- Single cleanup point at end of parsing
+- Pre-allocation based on argument count for performance
+
+### Parsing Algorithm
+
+1. **Type Detection**: Detect slice types via `@typeInfo(T).pointer`
+2. **Value Accumulation**: Collect values across argument boundaries
+3. **Syntax Patterns**: Support three patterns with precedence rules:
+   - **Repeated flags** (highest precedence): `--files=a.txt --files=b.txt`
+   - **Space-separated** (medium): `--files a.txt b.txt c.txt`
+   - **Comma-separated** (lowest): `--files=a.txt,b.txt,c.txt`
+4. **Individual Validation**: Validate each element independently
+5. **Error Context**: Provide specific error messages for failing elements
+
+### Error Handling for Slices
+
+```zig
+pub const Error = error{
+    // ... existing errors
+    InvalidSliceElement,  // One element in slice failed validation
+    EmptySlice,           // Empty slice provided when not allowed
+    MixedSyntax,          // Mixing comma and space separation (disallowed)
+};
+```
+
+### Performance Considerations
+
+- **Pre-allocation**: Estimate capacity based on arg count
+- **Growth Factor**: Exponential growth (2x) for unpredictable sizes
+- **Memory Locality**: All slice elements allocated sequentially
+- **Zero-cost for non-slices**: No overhead for non-slice types
+
+### Type Safety
+
+- **Comptime Validation**: Slice element types checked at compile time
+- **Nested Slices**: Explicitly disallowed (`[][]T`) for complexity control
+- **Mixed Types**: Prevent mixing different element types in same slice
+
+## Limitations
+
+- **No short flags** - Use long flags (`--verbose` not `-v`)
+- **No custom types** - Only built-in types and enums
+- **No nested slices** - Slices of slices not supported (`[][]T`)
+- **Mixed syntax disallowed** - Cannot mix comma and space separation for same flag
 
 ## Summary
 
