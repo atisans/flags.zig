@@ -31,6 +31,17 @@ pub fn parse(args: []const []const u8, comptime T: type) !T {
     }
 }
 
+// Fill a field with its default value or null if optional, else return error.
+fn fill_field_default(comptime field: std.builtin.Type.StructField, result: anytype, comptime error_type: Error) !void {
+    if (field.defaultValue()) |default| {
+        @field(result, field.name) = default;
+    } else if (comptime is_optional(field.type)) {
+        @field(result, field.name) = @as(field.type, null);
+    } else {
+        return error_type;
+    }
+}
+
 // Find the '@"--"' marker separating flags from positionals.
 fn marker_index(comptime fields: []const std.builtin.Type.StructField) ?usize {
     var marker_idx: ?usize = null;
@@ -106,11 +117,30 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
                 }
             }
 
-            if (found == false) return Error.UnknownFlag;
+            if (!found) return Error.UnknownFlag;
             continue;
         }
 
-        // Only long flags are accepted; short flags are rejected.
+        // Handle short flags (-v, -p, etc).
+        if (std.mem.startsWith(u8, arg, "-") and !positional_only) {
+            if (arg.len == 2) {
+                // Single char flag like -v
+                const flag_char = arg[1..2];
+                var found = false;
+                inline for (named_fields, 0..) |field, field_index| {
+                    if (field.name.len == 1 and std.mem.eql(u8, flag_char, field.name)) {
+                        found = true;
+                        if (counts[field_index] > 0) return Error.DuplicateFlag;
+                        counts[field_index] += 1;
+                        @field(result, field.name) = try parse_flag_value(field.type, null);
+                        break;
+                    }
+                }
+                if (!found) return Error.UnknownFlag;
+                continue;
+            }
+        }
+        
         if (std.mem.startsWith(u8, arg, "-")) return Error.UnexpectedArgument;
 
         if (positional_fields.len == 0) return Error.UnexpectedArgument;
@@ -126,26 +156,14 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
     // Fill in defaults and validate required flags.
     inline for (named_fields, 0..) |field, field_index| {
         if (counts[field_index] == 0) {
-            if (field.defaultValue()) |default| {
-                @field(result, field.name) = default;
-            } else if (comptime is_optional(field.type)) {
-                @field(result, field.name) = @as(field.type, null);
-            } else {
-                return Error.MissingRequiredFlag;
-            }
+            try fill_field_default(field, &result, Error.MissingRequiredFlag);
         }
     }
 
     // Fill missing positional args from defaults or optional values.
     if (positional_fields.len > 0) {
         inline for (positional_fields[positional_index..]) |field| {
-            if (field.defaultValue()) |default| {
-                @field(result, field.name) = default;
-            } else if (comptime is_optional(field.type)) {
-                @field(result, field.name) = @as(field.type, null);
-            } else {
-                return Error.MissingRequiredPositional;
-            }
+            try fill_field_default(field, &result, Error.MissingRequiredPositional);
         }
     }
 
@@ -190,6 +208,21 @@ fn parse_bool(value: []const u8) Error!bool {
     return Error.InvalidValue;
 }
 
+// Dispatch and parse a subcommand (struct or union).
+fn dispatch_subcommand(comptime field: std.builtin.Type.UnionField, args: []const []const u8, start_index: usize) !field.type {
+    const subcommand_info = @typeInfo(field.type);
+    return switch (subcommand_info) {
+        .@"struct" => try parse_flags(args, field.type, start_index + 1),
+        .@"union" => blk: {
+            if (subcommand_info.@"union".tag_type == null) {
+                @compileError("subcommand types must be struct or union(enum)");
+            }
+            break :blk try parse_commands(args, field.type, start_index + 1);
+        },
+        else => @compileError("subcommand types must be struct or union(enum)"),
+    };
+}
+
 // Dispatch to the matching subcommand and parse its arguments.
 fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize) !T {
     const fields = std.meta.fields(T);
@@ -205,19 +238,7 @@ fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize
 
     inline for (fields) |field| {
         if (std.mem.eql(u8, arg, field.name)) {
-            // Each subcommand can be a struct (flags) or another union(enum).
-            const subcommand_info = @typeInfo(field.type);
-            const parsed = switch (subcommand_info) {
-                .@"struct" => try parse_flags(args, field.type, start_index + 1),
-                .@"union" => blk: {
-                    if (subcommand_info.@"union".tag_type == null) {
-                        @compileError("subcommand types must be struct or union(enum)");
-                    }
-                    break :blk try parse_commands(args, field.type, start_index + 1);
-                },
-                else => @compileError("subcommand types must be struct or union(enum)"),
-            };
-
+            const parsed = try dispatch_subcommand(field, args, start_index);
             return @unionInit(T, field.name, parsed);
         }
     }
@@ -582,6 +603,21 @@ test "complex subcommand structure" {
         },
         else => unreachable,
     }
+}
+
+test "short flags" {
+    const Args = struct {
+        v: bool = false,
+        q: bool = false,
+    };
+
+    const flags1 = try parse(&.{ "prog", "-v" }, Args);
+    try std.testing.expect(flags1.v == true);
+    try std.testing.expect(flags1.q == false);
+
+    const flags2 = try parse(&.{ "prog", "-v", "-q" }, Args);
+    try std.testing.expect(flags2.v == true);
+    try std.testing.expect(flags2.q == true);
 }
 
 test "unexpected argument error" {

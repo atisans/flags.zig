@@ -41,6 +41,8 @@ A type-safe command-line argument parser for Zig. Taking inspiration from **Rust
 - [x] Error handling for invalid/unknown flags
 - [x] Positional arguments support
 - [x] Subcommands via `union(enum)`
+- [x] Short flag names (`-v`)
+- [x] Long flag names (`--verbose`)
 - [x] Slice support (multiple values per flag)
 - [x] Three parsing patterns: repeated, space-separated, comma-separated
 
@@ -130,6 +132,22 @@ pub fn main() !void {
 
 ```bash
 ./program --name=charlie --age=35 --active
+```
+
+### Short Flags
+
+Define single-character flag names for shorter invocations:
+
+```zig
+const Args = struct {
+    v: bool = false,  // Short flag: -v
+    q: bool = false,  // Short flag: -q
+};
+```
+
+```bash
+./program -v -q     # Multiple short flags
+./program -v        # Only verbose
 ```
 
 ### Slice (Multiple Values) Support
