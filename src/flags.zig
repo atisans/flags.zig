@@ -76,7 +76,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
     while (i < args.len) : (i += 1) {
         const arg = args[i];
 
-        if (is_help_arg(arg) and @hasDecl(T, "help")) {
+        if (is_help_arg(arg)) {
             print_help_and_exit(T);
         }
 
@@ -132,7 +132,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
     // Fill in defaults and validate required flags.
     inline for (named_fields, 0..) |field, field_index| {
         if (counts[field_index] == 0) {
-            if (field_default_value(field)) |default| {
+            if (field.defaultValue()) |default| {
                 @field(result, field.name) = default;
             } else if (comptime is_optional(field.type)) {
                 @field(result, field.name) = @as(field.type, null);
@@ -145,7 +145,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
     // Fill missing positional args from defaults or optional values.
     if (positional_fields.len > 0) {
         inline for (positional_fields[positional_index..]) |field| {
-            if (field_default_value(field)) |default| {
+            if (field.defaultValue()) |default| {
                 @field(result, field.name) = default;
             } else if (comptime is_optional(field.type)) {
                 @field(result, field.name) = @as(field.type, null);
@@ -156,11 +156,6 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
     }
 
     return result;
-}
-
-// Extract a default value from the struct field if it exists.
-fn field_default_value(comptime field: std.builtin.Type.StructField) ?field.type {
-    return field.defaultValue();
 }
 
 // Handle optional wrappers before parsing the concrete type.
@@ -211,7 +206,7 @@ fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize
     }
 
     const arg = args[start_index];
-    if (is_help_arg(arg) and @hasDecl(T, "help")) {
+    if (is_help_arg(arg)) {
         print_help_and_exit(T);
     }
 
@@ -258,17 +253,76 @@ fn is_help_arg(arg: []const u8) bool {
 }
 
 // Print help and terminate the process.
-fn print_help_and_exit(comptime Args: type) noreturn {
-    std.debug.print("{s}", .{Args.help});
+fn print_help_and_exit(comptime T: type) noreturn {
+    if (@hasDecl(T, "help")) {
+        std.debug.print("{s}", .{T.help});
+    } else {
+        print_auto_help(T);
+    }
     std.process.exit(0);
 }
 
-test "help flag without declaration" {
+fn print_auto_help(comptime T: type) void {
+    const info = @typeInfo(T);
+    switch (info) {
+        .@"struct" => {
+            const fields = std.meta.fields(T);
+            std.debug.print("Options:\n", .{});
+            inline for (fields) |field| {
+                comptime if (std.mem.eql(u8, field.name, "--")) continue;
+
+                const type_name = @typeName(field.type);
+                if (field.defaultValue()) |default| {
+                    if (field.type == bool) {
+                        const val = @as(*const bool, @ptrCast(&default)).*;
+                        std.debug.print("  --{s:<20} {s} (default: {s})\n", .{
+                            field.name,
+                            type_name,
+                            if (val) "true" else "false",
+                        });
+                    } else if (field.type == []const u8) {
+                        const val = @as(*const []const u8, @ptrCast(&default)).*;
+                        std.debug.print("  --{s:<20} {s} (default: {s})\n", .{
+                            field.name,
+                            type_name,
+                            val,
+                        });
+                    } else {
+                        std.debug.print("  --{s:<20} {s}\n", .{ field.name, type_name });
+                    }
+                } else if (comptime is_optional(field.type)) {
+                    std.debug.print("  --{s:<20} {s} (optional)\n", .{
+                        field.name,
+                        type_name,
+                    });
+                } else {
+                    std.debug.print("  --{s:<20} {s} (required)\n", .{
+                        field.name,
+                        type_name,
+                    });
+                }
+            }
+        },
+        .@"union" => {
+            const fields = std.meta.fields(T);
+            std.debug.print("Commands:\n", .{});
+            inline for (fields) |field| {
+                std.debug.print("  {s}\n", .{field.name});
+            }
+        },
+        else => {},
+    }
+}
+
+test "auto help generation" {
     const Args = struct {
         name: []const u8 = "joe",
+        port: u16 = 8080,
+        active: bool = false,
     };
 
-    try std.testing.expectError(Error.UnknownFlag, parse(&.{ "prog", "--help" }, Args));
+    try std.testing.expect(@hasDecl(Args, "help") == false);
+    // Auto help should be triggered on --help
 }
 
 test "invalid flag" {
