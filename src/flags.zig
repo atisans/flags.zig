@@ -22,16 +22,16 @@ pub const Error = error{
 };
 
 // Parse args into a struct (single command) or union(enum) (subcommands).
-pub fn parse(args: []const []const u8, comptime Args: type) !Args {
+pub fn parse(args: []const []const u8, comptime T: type) !T {
     if (args.len == 0) return Error.InvalidArgument;
-    const info = @typeInfo(Args);
+    const info = @typeInfo(T);
     switch (info) {
-        .@"struct" => return parse_flags(args, Args, 1),
+        .@"struct" => return parse_flags(args, T, 1),
         .@"union" => {
             if (info.@"union".tag_type == null) {
                 @compileError("Args must be a union(enum) to use subcommands");
             }
-            return parse_commands(args, Args, 1);
+            return parse_commands(args, T, 1);
         },
         else => @compileError("Args must be a struct or union(enum)"),
     }
@@ -50,10 +50,10 @@ fn marker_index(comptime fields: []const std.builtin.Type.StructField) ?usize {
 }
 
 // Parse a struct of flags and optional positional args.
-fn parse_flags(args: []const []const u8, comptime flags_type: type, start_index: usize) !flags_type {
-    comptime assert_struct(flags_type);
+fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !T {
+    comptime assert_struct(T);
 
-    const fields = std.meta.fields(flags_type);
+    const fields = std.meta.fields(T);
     // '@"--"' marks the boundary between flags and positional args.
     const marker_pos = comptime marker_index(fields);
     const named_fields = if (marker_pos) |idx| fields[0..idx] else fields;
@@ -76,8 +76,8 @@ fn parse_flags(args: []const []const u8, comptime flags_type: type, start_index:
     while (i < args.len) : (i += 1) {
         const arg = args[i];
 
-        if (is_help_arg(arg) and @hasDecl(flags_type, "help")) {
-            print_help_and_exit(flags_type);
+        if (is_help_arg(arg) and @hasDecl(T, "help")) {
+            print_help_and_exit(T);
         }
 
         // Explicit separator for positional arguments.
@@ -164,34 +164,34 @@ fn field_default_value(comptime field: std.builtin.Type.StructField) ?field.type
 }
 
 // Handle optional wrappers before parsing the concrete type.
-fn parse_flag_value(comptime value_type: type, value: ?[]const u8) !value_type {
-    return switch (@typeInfo(value_type)) {
+fn parse_flag_value(comptime T: type, value: ?[]const u8) !T {
+    return switch (@typeInfo(T)) {
         .optional => |opt| blk: {
             const parsed = try parse_scalar_value(opt.child, value);
-            break :blk @as(value_type, parsed);
+            break :blk @as(T, parsed);
         },
-        else => parse_scalar_value(value_type, value),
+        else => parse_scalar_value(T, value),
     };
 }
 
 // Parse supported scalar types (bool, int, float, enum, string).
-fn parse_scalar_value(comptime value_type: type, value: ?[]const u8) !value_type {
-    if (value_type == bool) {
+fn parse_scalar_value(comptime T: type, value: ?[]const u8) !T {
+    if (T == bool) {
         if (value == null) return true;
         return parse_bool(value.?);
     }
 
     const v = value orelse return Error.MissingValue;
 
-    if (value_type == []const u8) return v;
-    if (value_type == []u8) @compileError("use []const u8 for flag values");
+    if (T == []const u8) return v;
+    if (T == []u8) @compileError("use []const u8 for flag values");
 
-    const info = @typeInfo(value_type);
+    const info = @typeInfo(T);
     switch (info) {
-        .int => return std.fmt.parseInt(value_type, v, 10) catch return Error.InvalidValue,
-        .float => return std.fmt.parseFloat(value_type, v) catch return Error.InvalidValue,
-        .@"enum" => return std.meta.stringToEnum(value_type, v) orelse Error.InvalidValue,
-        else => @compileError("Unsupported flag type: " ++ @typeName(value_type)),
+        .int => return std.fmt.parseInt(T, v, 10) catch return Error.InvalidValue,
+        .float => return std.fmt.parseFloat(T, v) catch return Error.InvalidValue,
+        .@"enum" => return std.meta.stringToEnum(T, v) orelse Error.InvalidValue,
+        else => @compileError("Unsupported flag type: " ++ @typeName(T)),
     }
 }
 
@@ -203,16 +203,16 @@ fn parse_bool(value: []const u8) Error!bool {
 }
 
 // Dispatch to the matching subcommand and parse its arguments.
-fn parse_commands(args: []const []const u8, comptime commands_type: type, start_index: usize) !commands_type {
-    const fields = std.meta.fields(commands_type);
+fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize) !T {
+    const fields = std.meta.fields(T);
 
     if (args.len <= start_index) {
         return Error.MissingSubcommand;
     }
 
     const arg = args[start_index];
-    if (is_help_arg(arg) and @hasDecl(commands_type, "help")) {
-        print_help_and_exit(commands_type);
+    if (is_help_arg(arg) and @hasDecl(T, "help")) {
+        print_help_and_exit(T);
     }
 
     inline for (fields) |field| {
@@ -230,7 +230,7 @@ fn parse_commands(args: []const []const u8, comptime commands_type: type, start_
                 else => @compileError("subcommand types must be struct or union(enum)"),
             };
 
-            return @unionInit(commands_type, field.name, parsed);
+            return @unionInit(T, field.name, parsed);
         }
     }
 
@@ -238,15 +238,15 @@ fn parse_commands(args: []const []const u8, comptime commands_type: type, start_
 }
 
 // Ensure the schema is a struct at compile time.
-fn assert_struct(comptime schema_type: type) void {
-    if (@typeInfo(schema_type) != .@"struct") {
+fn assert_struct(comptime T: type) void {
+    if (@typeInfo(T) != .@"struct") {
         @compileError("flag definitions must be a struct");
     }
 }
 
 // Detect optional types so we can accept missing values.
-fn is_optional(comptime value_type: type) bool {
-    return switch (@typeInfo(value_type)) {
+fn is_optional(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
         .optional => true,
         else => false,
     };
