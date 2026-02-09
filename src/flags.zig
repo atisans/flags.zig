@@ -1,6 +1,5 @@
+/// Comptime-first CLI parser with typed flags, positional args, and subcommands.
 const std = @import("std");
-
-// Comptime-first CLI parser with typed flags, positional args, and subcommands.
 
 // Public error set for parse failures.
 pub const Error = error{
@@ -14,11 +13,6 @@ pub const Error = error{
     UnknownFlag,
     UnknownSubcommand,
     UnexpectedArgument,
-    NoArgsProvided,
-    UnknownCommand,
-    UnknownOption,
-    MissingRequiredOption,
-    CommandExecutionFailed,
 };
 
 // Parse args into a struct (single command) or union(enum) (subcommands).
@@ -39,14 +33,14 @@ pub fn parse(args: []const []const u8, comptime T: type) !T {
 
 // Find the '@"--"' marker separating flags from positionals.
 fn marker_index(comptime fields: []const std.builtin.Type.StructField) ?usize {
-    var idx: ?usize = null;
+    var marker_idx: ?usize = null;
     inline for (fields, 0..) |field, index| {
         if (std.mem.eql(u8, field.name, "--")) {
-            idx = index;
+            marker_idx = index;
             break;
         }
     }
-    return idx;
+    return marker_idx;
 }
 
 // Parse a struct of flags and optional positional args.
@@ -55,11 +49,11 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
 
     const fields = std.meta.fields(T);
     // '@"--"' marks the boundary between flags and positional args.
-    const marker_pos = comptime marker_index(fields);
-    const named_fields = if (marker_pos) |idx| fields[0..idx] else fields;
-    const positional_fields = if (marker_pos) |idx| fields[idx + 1 ..] else &[_]std.builtin.Type.StructField{};
+    const marker_idx = comptime marker_index(fields);
+    const named_fields = if (marker_idx) |idx| fields[0..idx] else fields;
+    const positional_fields = if (marker_idx) |idx| fields[idx + 1 ..] else &[_]std.builtin.Type.StructField{};
 
-    if (marker_pos) |idx| {
+    if (marker_idx) |idx| {
         if (fields[idx].type != void) {
             @compileError("'@" ++ "--" ++ "' marker must be declared as void");
         }
@@ -77,7 +71,7 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
         const arg = args[i];
 
         if (is_help_arg(arg)) {
-            print_help_and_exit(T);
+            print_help(T);
         }
 
         // Explicit separator for positional arguments.
@@ -92,27 +86,27 @@ fn parse_flags(args: []const []const u8, comptime T: type, start_index: usize) !
 
         if (std.mem.startsWith(u8, arg, "--") and !positional_only) {
             const trimmed = arg[2..];
-            var key = trimmed;
-            var value: ?[]const u8 = null;
+            var flag_name = trimmed;
+            var flag_value: ?[]const u8 = null;
 
             if (std.mem.indexOfScalar(u8, trimmed, '=')) |pos| {
-                key = trimmed[0..pos];
-                value = trimmed[pos + 1 ..];
+                flag_name = trimmed[0..pos];
+                flag_value = trimmed[pos + 1 ..];
             }
 
-            var matched = false;
+            var found = false;
             inline for (named_fields, 0..) |field, field_index| {
-                if (std.mem.eql(u8, key, field.name)) {
-                    matched = true;
+                if (std.mem.eql(u8, flag_name, field.name)) {
+                    found = true;
                     if (counts[field_index] > 0) return Error.DuplicateFlag;
 
                     counts[field_index] += 1;
-                    @field(result, field.name) = try parse_flag_value(field.type, value);
+                    @field(result, field.name) = try parse_flag_value(field.type, flag_value);
                     break;
                 }
             }
 
-            if (!matched) return Error.UnknownFlag;
+            if (found == false) return Error.UnknownFlag;
             continue;
         }
 
@@ -181,8 +175,7 @@ fn parse_scalar_value(comptime T: type, value: ?[]const u8) !T {
     if (T == []const u8) return v;
     if (T == []u8) @compileError("use []const u8 for flag values");
 
-    const info = @typeInfo(T);
-    switch (info) {
+    switch (@typeInfo(T)) {
         .int => return std.fmt.parseInt(T, v, 10) catch return Error.InvalidValue,
         .float => return std.fmt.parseFloat(T, v) catch return Error.InvalidValue,
         .@"enum" => return std.meta.stringToEnum(T, v) orelse Error.InvalidValue,
@@ -207,17 +200,17 @@ fn parse_commands(args: []const []const u8, comptime T: type, start_index: usize
 
     const arg = args[start_index];
     if (is_help_arg(arg)) {
-        print_help_and_exit(T);
+        print_help(T);
     }
 
     inline for (fields) |field| {
         if (std.mem.eql(u8, arg, field.name)) {
             // Each subcommand can be a struct (flags) or another union(enum).
-            const sub_info = @typeInfo(field.type);
-            const parsed = switch (sub_info) {
+            const subcommand_info = @typeInfo(field.type);
+            const parsed = switch (subcommand_info) {
                 .@"struct" => try parse_flags(args, field.type, start_index + 1),
                 .@"union" => blk: {
-                    if (sub_info.@"union".tag_type == null) {
+                    if (subcommand_info.@"union".tag_type == null) {
                         @compileError("subcommand types must be struct or union(enum)");
                     }
                     break :blk try parse_commands(args, field.type, start_index + 1);
@@ -253,7 +246,7 @@ fn is_help_arg(arg: []const u8) bool {
 }
 
 // Print help and terminate the process.
-fn print_help_and_exit(comptime T: type) noreturn {
+fn print_help(comptime T: type) noreturn {
     if (@hasDecl(T, "help")) {
         std.debug.print("{s}", .{T.help});
     } else {
