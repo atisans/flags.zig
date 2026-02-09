@@ -1,37 +1,69 @@
 # flags.zig
 
-A command-line flag parser for Zig. Define flags using a struct and parse command-line arguments into it.
+A type-safe command-line argument parser for Zig. Taking some best patterns from **Rust clap**, **Python argparse**, and **TigerBeetle's flags** implementation, defining flags using a struct\union(enum) and parse command-line arguments into it.
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage Examples](#usage-examples)
+- [Advanced Features](#advanced-features)
+- [Supported Types](#supported-types)
+- [Error Handling](#error-handling)
+- [Documentation](#documentation)
+- [Credits](#credits)
+
+---
+
+## Overview
+
+**flags.zig** provides a declarative, type-safe approach to command-line parsing by leveraging Zig's powerful comptime capabilities. Define your CLI interface as a struct—defaults, types, and let the library handle the rest.
+
+### Why flags.zig?
+
+- Zero runtime overhead—parsing happens at comptime where possible
+- Type safety—catch errors at compile time, not runtime
+- Idiomatic Zig—works with the grain of the language
+- Zero external dependencies
+
+---
 
 ## Features
-
 - [x] Multiple flag types (bool, string, int, float)
 - [x] Struct-based argument definition
 - [x] Default values via struct fields
 - [x] Automatic help generation (`--help`)
 - [x] Error handling for invalid/unknown flags
-- [ ] Positional arguments support - [P1]
-- [ ] Short flag names (`-v`) - [P2]
-- [ ] Duration type - [P1]
-- [ ] Flag sets for subcommands - [P1]
-- [ ] Custom flag types via `Value` interface - [P2]
-- [ ] Environment variable integration - [P4]
-- [ ] Configuration file support - [P4]
+- [x] Positional arguments support
+- [~] Short flag names (`-v`) - [not planned]
+- [~] Custom flag types - [TBD]
+- [~] Environment variable integration - [TBD]
+- [~] Configuration file support - [TBD]
+
+---
 
 ## Installation
 
-Fetch library:
+### 1. Fetch the library
+
 ```bash
 zig fetch --save git+https://github.com/atisans/flags.zig
 ```
 
-Add to your `build.zig`:
+### 2. Add to your `build.zig`
 
 ```zig
 const flags = b.dependency("flags", .{});
 exe.root_module.addImport("flags", flags.module("flags"));
 ```
 
-## Basic Usage
+---
+
+## Quick Start
 
 ```zig
 const std = @import("std");
@@ -42,10 +74,6 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Get command-line arguments
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
     // Define flags as a struct
     const Args = struct {
         name: []const u8 = "world",
@@ -53,47 +81,172 @@ pub fn main() !void {
         active: bool = false,
     };
 
-    // Parse flags into the struct
-    const parsed = try flags.parse(allocator, Args, args);
+    // Parse and use
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-    // Use the parsed values
-    std.debug.print("Hello {s}! Age: {d}, Active: {}\n", .{ parsed.name, parsed.age, parsed.active });
+    const parsed = try flags.parse(args, Args);
+
+    std.debug.print("Hello {s}! Age: {d}, Active: {}\n", .{
+        parsed.name, parsed.age, parsed.active
+    });
 }
 ```
 
-## Command Line Examples
+---
+
+## Usage Examples
+
+### Basic Flags
 
 ```bash
-# Basic usage
 ./program --name=alice --age=30 --active
+```
 
+### Individual Flag Types
+
+```bash
 # String flag
 ./program --name=bob
 
 # Integer flag
 ./program --age=40
 
-# Boolean flag (no value needed)
+# Boolean flag (presence = true)
 ./program --active
+```
 
-# Help
+### Getting Help
+
+```bash
 ./program --help
+```
 
-# Mixed flags
+### Mixed Flags
+
+```bash
 ./program --name=charlie --age=35 --active
 ```
 
-## Supported Types
+---
 
-- `bool` - Boolean flags (presence = true, or `--flag=true/false`)
-- `[]const u8` - String values
-- `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64` - Integer values
-- `f32`, `f64` - Floating-point values
+## Advanced Features
+
+### Type-Safe Arguments
+
+Leverage Zig's type system for compile-time guarantees:
+
+```zig
+const Args = struct {
+    // u16 enforces valid port range (0-65535)
+    port: u16 = 8080,
+    
+    // Optional types for nullable values
+    config: ?[]const u8 = null,
+    
+    // Enums for valid choices
+    format: enum { json, yaml, toml } = .json,
+};
+```
+
+### Help Documentation
+
+Since Zig doesn't expose doc comments through `@typeInfo()`, use `pub const help`:
+
+```zig
+const Args = struct {
+    verbose: bool = false,
+    port: u16 = 8080,
+    
+    pub const help = 
+        \\Options:
+        \\  --verbose    Enable verbose output (default: false)
+        \\  --port       Port to listen on (default: 8080)
+    ;
+};
+```
+
+**Why this approach?**
+- ✓ Accessible at compile time via `@hasDecl()`
+- ✓ Type-safe (struct literal validation)
+- ✓ Zero runtime cost (can be optimized away)
+- ✓ Supports examples, exit codes, and full documentation
+
+### Subcommands
+
+Git-style subcommands using `union(enum)`:
+
+```zig
+const CLI = union(enum) {
+    start: struct {
+        host: []const u8 = "localhost",
+        port: u16 = 8080,
+    },
+    stop: struct {
+        force: bool = false,
+    },
+    
+    pub const help = 
+        \\ Server management CLI
+        \\ commands:
+        \\  start       Start the server
+        \\      --host     Hostname to bind to (default: localhost)
+        \\      --port     Port to listen on (default: 8080)
+        \\  stop        Stop the server
+        \\      --force    Force stop (default: false)
+        ;
+    ;
+};
+
+const cli = try flags.parse(args, CLI);
+switch (cli) {
+    .start => |s| startServer(s.host, s.port),
+    .stop => |s| stopServer(s.force),
+}
+```
+
+---
 
 ## Error Handling
 
-The parser returns errors for:
-- `error.InvalidArgument` - Non-flag argument found
-- `error.UnknownFlag` - Flag not defined in struct
-- `error.MissingValue` - Flag requires a value but none provided
-- `error.InvalidValue` - Value cannot be parsed (e.g., non-integer for int flag)
+The parser returns descriptive errors:
+
+| Error | Cause |
+|-------|-------|
+| `error.InvalidArgument` | Non-flag argument found |
+| `error.UnknownFlag` | Flag not defined in struct |
+| `error.MissingValue` | Flag requires value but none provided |
+| `error.InvalidValue` | Value cannot be parsed to type |
+
+---
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+| Document | Description |
+|----------|-------------|
+| [Design Document](docs/DESIGN.md) | Architecture, philosophy, and design decisions |
+| [API Specification](docs/API_SPECIFICATION.md) | Complete API reference and usage patterns |
+
+---
+
+## Credits
+
+This library draws significant inspiration from two exceptional projects:
+
+### TigerBeetle
+
+The design philosophy of struct-based flag definitions and zero-cost abstractions is heavily inspired by [TigerBeetle's flags implementation](https://github.com/tigerbeetle/tigerbeetle). Their approach to type-safe, performant CLI parsing in Zig demonstrates the power of leveraging Zig's comptime capabilities.
+
+### Rust clap
+
+The declarative API design and developer experience patterns are influenced by [Rust's clap crate](https://github.com/clap-rs/clap). Clap's ergonomic structopt-style derive patterns informed our approach to making CLI parsing intuitive while maintaining compile-time safety.
+
+---
+
+<div align="center">
+
+Made with  for the Zig community
+
+</div>
