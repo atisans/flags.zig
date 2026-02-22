@@ -120,25 +120,6 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
             continue;
         }
 
-        // Handle short flags (-v, -p, etc).
-        if (std.mem.startsWith(u8, arg, "-") and !positional_only) {
-            if (arg.len == 2) {
-                const flag_char = arg[1..2];
-                var found = false;
-                inline for (named_fields, 0..) |field, field_index| {
-                    if (field.name.len == 1 and std.mem.eql(u8, flag_char, field.name)) {
-                        found = true;
-                        if (counts[field_index] > 0) return Error.DuplicateFlag;
-                        counts[field_index] += 1;
-                        @field(result, field.name) = try parse_value(field.type, null);
-                        break;
-                    }
-                }
-                if (!found) return Error.UnknownFlag;
-                continue;
-            }
-        }
-
         if (std.mem.startsWith(u8, arg, "-")) return Error.UnexpectedArgument;
 
         if (positional_fields.len == 0) return Error.UnexpectedArgument;
@@ -601,17 +582,16 @@ test "complex subcommand structure" {
 
 test "short flags" {
     const Args = struct {
-        v: bool = false,
-        q: bool = false,
+        files: []const []const u8 = &[_][]const u8{},
     };
 
-    const flags1 = try parse(&.{ "prog", "-v" }, Args);
-    try std.testing.expect(flags1.v == true);
-    try std.testing.expect(flags1.q == false);
+    const result = try parse(talloc, &.{ "prog", "--files=a.txt", "--files=b.txt", "--files=c.txt" }, Args);
+    defer talloc.free(result.files);
 
-    const flags2 = try parse(&.{ "prog", "-v", "-q" }, Args);
-    try std.testing.expect(flags2.v == true);
-    try std.testing.expect(flags2.q == true);
+    try testing.expectEqual(@as(usize, 3), result.files.len);
+    try testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
+    try testing.expect(std.mem.eql(u8, result.files[1], "b.txt"));
+    try testing.expect(std.mem.eql(u8, result.files[2], "c.txt"));
 }
 
 test "unexpected argument error" {
