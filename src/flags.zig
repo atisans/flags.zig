@@ -59,7 +59,10 @@ fn separator_index(comptime fields: []const std.builtin.Type.StructField) ?usize
 
 /// Parse a struct schema of named flags and optional positional args.
 fn parse_struct(args: []const []const u8, comptime T: type) !T {
-    comptime assert_struct(T);
+    // Ensure the given type is a struct at compile time.
+    comptime if (@typeInfo(T) != .@"struct") {
+        @compileError("flag definitions must be a struct");
+    };
 
     const fields = std.meta.fields(T);
     const marker_idx = comptime separator_index(fields);
@@ -242,13 +245,6 @@ fn parse_commands(args: []const []const u8, comptime T: type) !T {
     }
 
     return Error.UnknownSubcommand;
-}
-
-/// Ensure the given type is a struct at compile time.
-fn assert_struct(comptime T: type) void {
-    if (@typeInfo(T) != .@"struct") {
-        @compileError("flag definitions must be a struct");
-    }
 }
 
 /// Check whether a type is an optional.
