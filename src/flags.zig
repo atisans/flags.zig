@@ -264,68 +264,15 @@ fn is_help_arg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help");
 }
 
-/// Print help text and exit. Uses a user-declared help string if available,
-/// otherwise generates help from the type schema.
+/// Print help text and exit. Requires `pub const help` on the type.
+/// Help is the user's responsibility — the parser handles parsing, not presentation.
 fn print_help(comptime T: type) noreturn {
     if (@hasDecl(T, "help")) {
         std.debug.print("{s}", .{T.help});
     } else {
-        print_generated_help(T);
+        std.debug.print("No help available. Declare `pub const help` on your type.\n", .{});
     }
     std.process.exit(0);
-}
-
-/// Generate and print help text from the struct/union type schema.
-fn print_generated_help(comptime T: type) void {
-    const info = @typeInfo(T);
-    switch (info) {
-        .@"struct" => {
-            const fields = std.meta.fields(T);
-            std.debug.print("Options:\n", .{});
-            inline for (fields) |field| {
-                comptime if (std.mem.eql(u8, field.name, "--")) continue;
-
-                const type_name = @typeName(field.type);
-                if (field.defaultValue()) |default| {
-                    if (field.type == bool) {
-                        const val = @as(*const bool, @ptrCast(&default)).*;
-                        std.debug.print("  --{s:<20} {s} (default: {s})\n", .{
-                            field.name,
-                            type_name,
-                            if (val) "true" else "false",
-                        });
-                    } else if (field.type == []const u8) {
-                        const val = @as(*const []const u8, @ptrCast(&default)).*;
-                        std.debug.print("  --{s:<20} {s} (default: {s})\n", .{
-                            field.name,
-                            type_name,
-                            val,
-                        });
-                    } else {
-                        std.debug.print("  --{s:<20} {s}\n", .{ field.name, type_name });
-                    }
-                } else if (comptime is_optional(field.type)) {
-                    std.debug.print("  --{s:<20} {s} (optional)\n", .{
-                        field.name,
-                        type_name,
-                    });
-                } else {
-                    std.debug.print("  --{s:<20} {s} (required)\n", .{
-                        field.name,
-                        type_name,
-                    });
-                }
-            }
-        },
-        .@"union" => {
-            const fields = std.meta.fields(T);
-            std.debug.print("Commands:\n", .{});
-            inline for (fields) |field| {
-                std.debug.print("  {s}\n", .{field.name});
-            }
-        },
-        else => {},
-    }
 }
 
 test "auto help generation" {
