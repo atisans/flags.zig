@@ -38,7 +38,7 @@ pub fn parse(args: []const []const u8, comptime T: type) !T {
 fn apply_default(comptime field: std.builtin.Type.StructField, result: anytype, comptime error_type: Error) !void {
     if (field.defaultValue()) |default| {
         @field(result, field.name) = default;
-    } else if (comptime is_optional(field.type)) {
+    } else if (comptime @typeInfo(field.type) == .optional) {
         @field(result, field.name) = @as(field.type, null);
     } else {
         return error_type;
@@ -245,14 +245,6 @@ fn parse_commands(args: []const []const u8, comptime T: type) !T {
     }
 
     return Error.UnknownSubcommand;
-}
-
-/// Check whether a type is an optional.
-fn is_optional(comptime T: type) bool {
-    return switch (@typeInfo(T)) {
-        .optional => true,
-        else => false,
-    };
 }
 
 /// Return true if the argument is a help flag (-h or --help).
