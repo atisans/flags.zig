@@ -1,8 +1,8 @@
 /// Comptime-first CLI parser with typed flags, positional args, and subcommands.
 const std = @import("std");
 
-/// Public error set for parse failures.
-pub const Error = error{
+/// error set for parse failures.
+const Error = error{
     DuplicateFlag,
     InvalidArgument,
     InvalidValue,
