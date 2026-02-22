@@ -297,8 +297,6 @@ fn print_help(comptime T: type) noreturn {
 // Tests
 // =============================================================================
 
-const talloc = std.testing.allocator;
-
 test "auto help generation" {
     const Args = struct {
         name: []const u8 = "joe",
@@ -310,14 +308,16 @@ test "auto help generation" {
 }
 
 test "invalid flag" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8 = "joe",
     };
 
-    try std.testing.expectError(Error.UnexpectedArgument, parse(talloc, &.{ "prog", "name=jack" }, Args));
+    try std.testing.expectError(Error.UnexpectedArgument, parse(allocator, &.{ "prog", "name=jack" }, Args));
 }
 
 test "parse defaults" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8 = "joe",
         active: bool = false,
@@ -325,7 +325,7 @@ test "parse defaults" {
         rate: f32 = 1.0,
     };
 
-    const flags = try parse(talloc, &.{"prog"}, Args);
+    const flags = try parse(allocator, &.{"prog"}, Args);
     try std.testing.expect(std.mem.eql(u8, flags.name, "joe"));
     try std.testing.expect(flags.active == false);
     try std.testing.expect(flags.port == 5000);
@@ -333,6 +333,7 @@ test "parse defaults" {
 }
 
 test "parse primitives" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8 = "default",
         port: u16 = 8080,
@@ -340,7 +341,7 @@ test "parse primitives" {
         active: bool = false,
     };
 
-    const flags = try parse(talloc, &.{ "prog", "--name=test", "--port=9090", "--rate=2.5", "--active" }, Args);
+    const flags = try parse(allocator, &.{ "prog", "--name=test", "--port=9090", "--rate=2.5", "--active" }, Args);
     try std.testing.expect(std.mem.eql(u8, flags.name, "test"));
     try std.testing.expect(flags.port == 9090);
     try std.testing.expect(flags.rate == 2.5);
@@ -348,80 +349,87 @@ test "parse primitives" {
 }
 
 test "parse enum" {
+    const allocator = std.testing.allocator;
     const Format = enum { json, yaml, toml };
     const Args = struct {
         format: Format = .json,
     };
 
-    const flags = try parse(talloc, &.{ "prog", "--format=yaml" }, Args);
+    const flags = try parse(allocator, &.{ "prog", "--format=yaml" }, Args);
     try std.testing.expect(flags.format == .yaml);
 }
 
 test "parse enum with default" {
+    const allocator = std.testing.allocator;
     const Format = enum { json, yaml, toml };
     const Args = struct {
         format: Format = .json,
     };
 
-    const flags = try parse(talloc, &.{"prog"}, Args);
+    const flags = try parse(allocator, &.{"prog"}, Args);
     try std.testing.expect(flags.format == .json);
 }
 
 test "parse optional string" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         config: ?[]const u8 = null,
     };
 
-    const flags1 = try parse(talloc, &.{"prog"}, Args);
+    const flags1 = try parse(allocator, &.{"prog"}, Args);
     try std.testing.expect(flags1.config == null);
 
-    const flags2 = try parse(talloc, &.{ "prog", "--config=/path/to/config" }, Args);
+    const flags2 = try parse(allocator, &.{ "prog", "--config=/path/to/config" }, Args);
     try std.testing.expect(flags2.config != null);
     try std.testing.expect(std.mem.eql(u8, flags2.config.?, "/path/to/config"));
 }
 
 test "parse optional int" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         count: ?u32 = null,
     };
 
-    const flags1 = try parse(talloc, &.{"prog"}, Args);
+    const flags1 = try parse(allocator, &.{"prog"}, Args);
     try std.testing.expect(flags1.count == null);
 
-    const flags2 = try parse(talloc, &.{ "prog", "--count=42" }, Args);
+    const flags2 = try parse(allocator, &.{ "prog", "--count=42" }, Args);
     try std.testing.expect(flags2.count != null);
     try std.testing.expect(flags2.count.? == 42);
 }
 
 test "parse optional bool" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         verbose: ?bool = null,
     };
 
-    const flags1 = try parse(talloc, &.{"prog"}, Args);
+    const flags1 = try parse(allocator, &.{"prog"}, Args);
     try std.testing.expect(flags1.verbose == null);
 
-    const flags2 = try parse(talloc, &.{ "prog", "--verbose" }, Args);
+    const flags2 = try parse(allocator, &.{ "prog", "--verbose" }, Args);
     try std.testing.expect(flags2.verbose != null);
     try std.testing.expect(flags2.verbose.? == true);
 }
 
 test "parse boolean formats" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         flag: bool = false,
     };
 
-    const flags1 = try parse(talloc, &.{ "prog", "--flag" }, Args);
+    const flags1 = try parse(allocator, &.{ "prog", "--flag" }, Args);
     try std.testing.expect(flags1.flag == true);
 
-    const flags2 = try parse(talloc, &.{ "prog", "--flag=true" }, Args);
+    const flags2 = try parse(allocator, &.{ "prog", "--flag=true" }, Args);
     try std.testing.expect(flags2.flag == true);
 
-    const flags3 = try parse(talloc, &.{ "prog", "--flag=false" }, Args);
+    const flags3 = try parse(allocator, &.{ "prog", "--flag=false" }, Args);
     try std.testing.expect(flags3.flag == false);
 }
 
 test "parse subcommand" {
+    const allocator = std.testing.allocator;
     const CLI = union(enum) {
         start: struct {
             host: []const u8 = "localhost",
@@ -432,15 +440,16 @@ test "parse subcommand" {
         },
     };
 
-    const result1 = try parse(talloc, &.{ "prog", "start", "--host=0.0.0.0", "--port=3000" }, CLI);
+    const result1 = try parse(allocator, &.{ "prog", "start", "--host=0.0.0.0", "--port=3000" }, CLI);
     try std.testing.expect(std.mem.eql(u8, result1.start.host, "0.0.0.0"));
     try std.testing.expect(result1.start.port == 3000);
 
-    const result2 = try parse(talloc, &.{ "prog", "stop", "--force" }, CLI);
+    const result2 = try parse(allocator, &.{ "prog", "stop", "--force" }, CLI);
     try std.testing.expect(result2.stop.force == true);
 }
 
 test "parse subcommand with defaults" {
+    const allocator = std.testing.allocator;
     const CLI = union(enum) {
         start: struct {
             host: []const u8 = "localhost",
@@ -449,12 +458,13 @@ test "parse subcommand with defaults" {
         stop: struct {},
     };
 
-    const result = try parse(talloc, &.{ "prog", "start" }, CLI);
+    const result = try parse(allocator, &.{ "prog", "start" }, CLI);
     try std.testing.expect(std.mem.eql(u8, result.start.host, "localhost"));
     try std.testing.expect(result.start.port == 8080);
 }
 
 test "missing subcommand" {
+    const allocator = std.testing.allocator;
     const CLI = union(enum) {
         start: struct {
             host: []const u8 = "localhost",
@@ -464,10 +474,11 @@ test "missing subcommand" {
         },
     };
 
-    try std.testing.expectError(Error.MissingSubcommand, parse(talloc, &.{"prog"}, CLI));
+    try std.testing.expectError(Error.MissingSubcommand, parse(allocator, &.{"prog"}, CLI));
 }
 
 test "unknown subcommand" {
+    const allocator = std.testing.allocator;
     const CLI = union(enum) {
         start: struct {
             host: []const u8 = "localhost",
@@ -477,56 +488,62 @@ test "unknown subcommand" {
         },
     };
 
-    try std.testing.expectError(Error.UnknownSubcommand, parse(talloc, &.{ "prog", "restart" }, CLI));
+    try std.testing.expectError(Error.UnknownSubcommand, parse(allocator, &.{ "prog", "restart" }, CLI));
 }
 
 test "duplicate flag" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.DuplicateFlag, parse(talloc, &.{ "prog", "--port=8080", "--port=9090" }, Args));
+    try std.testing.expectError(Error.DuplicateFlag, parse(allocator, &.{ "prog", "--port=8080", "--port=9090" }, Args));
 }
 
 test "missing value" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8,
     };
 
-    try std.testing.expectError(Error.MissingValue, parse(talloc, &.{ "prog", "--name" }, Args));
+    try std.testing.expectError(Error.MissingValue, parse(allocator, &.{ "prog", "--name" }, Args));
 }
 
 test "invalid enum value" {
+    const allocator = std.testing.allocator;
     const Format = enum { json, yaml, toml };
     const Args = struct {
         format: Format = .json,
     };
 
-    try std.testing.expectError(Error.InvalidValue, parse(talloc, &.{ "prog", "--format=xml" }, Args));
+    try std.testing.expectError(Error.InvalidValue, parse(allocator, &.{ "prog", "--format=xml" }, Args));
 }
 
 test "invalid int value" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.InvalidValue, parse(talloc, &.{ "prog", "--port=not-a-number" }, Args));
+    try std.testing.expectError(Error.InvalidValue, parse(allocator, &.{ "prog", "--port=not-a-number" }, Args));
 }
 
 test "no args provided" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.InvalidArgument, parse(talloc, &.{}, Args));
+    try std.testing.expectError(Error.InvalidArgument, parse(allocator, &.{}, Args));
 }
 
 test "missing required flag" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         name: []const u8,
     };
 
-    try std.testing.expectError(Error.MissingRequiredFlag, parse(talloc, &.{"prog"}, Args));
+    try std.testing.expectError(Error.MissingRequiredFlag, parse(allocator, &.{"prog"}, Args));
 }
 
 test "help declaration exists" {
@@ -540,6 +557,7 @@ test "help declaration exists" {
 }
 
 test "complex subcommand structure" {
+    const allocator = std.testing.allocator;
     const CLI = union(enum) {
         server: union(enum) {
             start: struct {
@@ -557,28 +575,30 @@ test "complex subcommand structure" {
         },
     };
 
-    const result = try parse(talloc, &.{ "prog", "server", "start", "--port=9090" }, CLI);
+    const result = try parse(allocator, &.{ "prog", "server", "start", "--port=9090" }, CLI);
     try std.testing.expect(std.mem.eql(u8, result.server.start.host, "0.0.0.0"));
     try std.testing.expect(result.server.start.port == 9090);
 }
 
 test "unexpected argument error" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.UnexpectedArgument, parse(talloc, &.{ "prog", "--port=8080", "extra" }, Args));
+    try std.testing.expectError(Error.UnexpectedArgument, parse(allocator, &.{ "prog", "--port=8080", "extra" }, Args));
 }
 
 // --- Slice tests ---
 
 test "slice repeated flags" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         files: []const []const u8 = &[_][]const u8{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--files=a.txt", "--files=b.txt", "--files=c.txt" }, Args);
-    defer talloc.free(result.files);
+    const result = try parse(allocator, &.{ "prog", "--files=a.txt", "--files=b.txt", "--files=c.txt" }, Args);
+    defer allocator.free(result.files);
 
     try std.testing.expectEqual(@as(usize, 3), result.files.len);
     try std.testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
@@ -587,12 +607,13 @@ test "slice repeated flags" {
 }
 
 test "slice comma separated" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         files: []const []const u8 = &[_][]const u8{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--files=a.txt,b.txt,c.txt" }, Args);
-    defer talloc.free(result.files);
+    const result = try parse(allocator, &.{ "prog", "--files=a.txt,b.txt,c.txt" }, Args);
+    defer allocator.free(result.files);
 
     try std.testing.expectEqual(@as(usize, 3), result.files.len);
     try std.testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
@@ -601,12 +622,13 @@ test "slice comma separated" {
 }
 
 test "slice integer values" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         ports: []const u16 = &[_]u16{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--ports=8080", "--ports=9090", "--ports=3000" }, Args);
-    defer talloc.free(result.ports);
+    const result = try parse(allocator, &.{ "prog", "--ports=8080", "--ports=9090", "--ports=3000" }, Args);
+    defer allocator.free(result.ports);
 
     try std.testing.expectEqual(@as(usize, 3), result.ports.len);
     try std.testing.expectEqual(@as(u16, 8080), result.ports[0]);
@@ -615,13 +637,14 @@ test "slice integer values" {
 }
 
 test "slice enum values" {
+    const allocator = std.testing.allocator;
     const Format = enum { json, yaml, toml };
     const Args = struct {
         formats: []const Format = &[_]Format{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--formats=json,yaml,toml" }, Args);
-    defer talloc.free(result.formats);
+    const result = try parse(allocator, &.{ "prog", "--formats=json,yaml,toml" }, Args);
+    defer allocator.free(result.formats);
 
     try std.testing.expectEqual(@as(usize, 3), result.formats.len);
     try std.testing.expectEqual(Format.json, result.formats[0]);
@@ -630,24 +653,26 @@ test "slice enum values" {
 }
 
 test "slice with default" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         files: []const []const u8 = &[_][]const u8{},
     };
 
-    const result = try parse(talloc, &.{"prog"}, Args);
+    const result = try parse(allocator, &.{"prog"}, Args);
     // Default is used (no allocation), nothing to free.
     try std.testing.expectEqual(@as(usize, 0), result.files.len);
 }
 
 test "slice mixed with scalar flags" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         files: []const []const u8 = &[_][]const u8{},
         verbose: bool = false,
         port: u16 = 8080,
     };
 
-    const result = try parse(talloc, &.{ "prog", "--files=a.txt", "--verbose", "--files=b.txt", "--port=3000" }, Args);
-    defer talloc.free(result.files);
+    const result = try parse(allocator, &.{ "prog", "--files=a.txt", "--verbose", "--files=b.txt", "--port=3000" }, Args);
+    defer allocator.free(result.files);
 
     try std.testing.expectEqual(@as(usize, 2), result.files.len);
     try std.testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
@@ -657,12 +682,13 @@ test "slice mixed with scalar flags" {
 }
 
 test "slice comma separated integers" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         ports: []const u16 = &[_]u16{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--ports=80,443,8080" }, Args);
-    defer talloc.free(result.ports);
+    const result = try parse(allocator, &.{ "prog", "--ports=80,443,8080" }, Args);
+    defer allocator.free(result.ports);
 
     try std.testing.expectEqual(@as(usize, 3), result.ports.len);
     try std.testing.expectEqual(@as(u16, 80), result.ports[0]);
@@ -671,34 +697,37 @@ test "slice comma separated integers" {
 }
 
 test "slice invalid element" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         ports: []const u16 = &[_]u16{},
     };
 
-    try std.testing.expectError(Error.InvalidValue, parse(talloc, &.{ "prog", "--ports=80,not_a_number" }, Args));
+    try std.testing.expectError(Error.InvalidValue, parse(allocator, &.{ "prog", "--ports=80,not_a_number" }, Args));
 }
 
 test "slice single value" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         tags: []const []const u8 = &[_][]const u8{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--tags=only-one" }, Args);
-    defer talloc.free(result.tags);
+    const result = try parse(allocator, &.{ "prog", "--tags=only-one" }, Args);
+    defer allocator.free(result.tags);
 
     try std.testing.expectEqual(@as(usize, 1), result.tags.len);
     try std.testing.expect(std.mem.eql(u8, result.tags[0], "only-one"));
 }
 
 test "multiple slice fields" {
+    const allocator = std.testing.allocator;
     const Args = struct {
         files: []const []const u8 = &[_][]const u8{},
         ports: []const u16 = &[_]u16{},
     };
 
-    const result = try parse(talloc, &.{ "prog", "--files=a.txt,b.txt", "--ports=80,443" }, Args);
-    defer talloc.free(result.files);
-    defer talloc.free(result.ports);
+    const result = try parse(allocator, &.{ "prog", "--files=a.txt,b.txt", "--ports=80,443" }, Args);
+    defer allocator.free(result.files);
+    defer allocator.free(result.ports);
 
     try std.testing.expectEqual(@as(usize, 2), result.files.len);
     try std.testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
