@@ -1,26 +1,12 @@
 /// Comptime-first CLI parser with typed flags, positional args, subcommands, and slices.
 const std = @import("std");
 
-/// error set for parse failures.
-const Error = error{
-    DuplicateFlag,
-    InvalidArgument,
-    InvalidValue,
-    MissingRequiredFlag,
-    MissingRequiredPositional,
-    MissingSubcommand,
-    MissingValue,
-    UnknownFlag,
-    UnknownSubcommand,
-    UnexpectedArgument,
-};
-
 /// Parse args into a struct (single command) or union(enum) (subcommands).
 ///
 /// Caller passes full argv; the parser skips argv[0] (the program name).
 /// Allocator is used for slice field allocation; caller owns returned memory.
 pub fn parse(allocator: std.mem.Allocator, args: []const []const u8, comptime T: type) !T {
-    if (args.len == 0) return Error.InvalidArgument;
+    if (args.len == 0) return error.InvalidArgument;
     const trimmed = args[1..];
     const info = @typeInfo(T);
     switch (info) {
@@ -36,7 +22,7 @@ pub fn parse(allocator: std.mem.Allocator, args: []const []const u8, comptime T:
 }
 
 /// Apply default value or null for optional fields, otherwise return the given error.
-fn apply_default(comptime field: std.builtin.Type.StructField, result: anytype, comptime error_type: Error) !void {
+fn apply_default(comptime field: std.builtin.Type.StructField, result: anytype, comptime error_type: anyerror) !void {
     if (field.defaultValue()) |default| {
         @field(result, field.name) = default;
     } else if (comptime @typeInfo(field.type) == .optional) {
@@ -102,7 +88,7 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
 
         if (std.mem.eql(u8, arg, "--")) {
             if (positional_fields.len == 0) {
-                return Error.UnexpectedArgument;
+                return error.UnexpectedArgument;
             }
 
             positional_only = true;
@@ -125,7 +111,7 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
                     found = true;
 
                     if (comptime is_slice_type(field.type)) {
-                        const fv = flag_value orelse return Error.MissingValue;
+                        const fv = flag_value orelse return error.MissingValue;
                         // --files=a.txt,b.txt or --files=a.txt
                         var iter = std.mem.splitScalar(u8, fv, ',');
                         while (iter.next()) |part| {
@@ -133,7 +119,7 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
                         }
                         seen[field_index] = true;
                     } else {
-                        if (seen[field_index]) return Error.DuplicateFlag;
+                        if (seen[field_index]) return error.DuplicateFlag;
 
                         seen[field_index] = true;
                         @field(result, field.name) = try parse_value(field.type, flag_value);
@@ -142,15 +128,15 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
                 }
             }
 
-            if (!found) return Error.UnknownFlag;
+            if (!found) return error.UnknownFlag;
             continue;
         }
 
-        if (std.mem.startsWith(u8, arg, "-")) return Error.UnexpectedArgument;
+        if (std.mem.startsWith(u8, arg, "-")) return error.UnexpectedArgument;
 
-        if (positional_fields.len == 0) return Error.UnexpectedArgument;
+        if (positional_fields.len == 0) return error.UnexpectedArgument;
 
-        if (positional_index >= positional_fields.len) return Error.UnexpectedArgument;
+        if (positional_index >= positional_fields.len) return error.UnexpectedArgument;
 
         const field = positional_fields[positional_index];
         @field(result, field.name) = try parse_value(field.type, arg);
@@ -171,11 +157,11 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
                 }
                 @field(result, field.name) = typed;
             } else {
-                try apply_default(field, &result, Error.MissingRequiredFlag);
+                try apply_default(field, &result, error.MissingRequiredFlag);
             }
         } else {
             if (!seen[field_index]) {
-                try apply_default(field, &result, Error.MissingRequiredFlag);
+                try apply_default(field, &result, error.MissingRequiredFlag);
             }
         }
     }
@@ -183,7 +169,7 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
     // Apply defaults for missing positional args.
     if (positional_fields.len > 0) {
         inline for (positional_fields[positional_index..]) |field| {
-            try apply_default(field, &result, Error.MissingRequiredPositional);
+            try apply_default(field, &result, error.MissingRequiredPositional);
         }
     }
 
@@ -205,24 +191,24 @@ fn parse_scalar(comptime T: type, value: ?[]const u8) !T {
         return parse_bool(value.?);
     }
 
-    const v = value orelse return Error.MissingValue;
+    const v = value orelse return error.MissingValue;
 
     if (T == []const u8) return v;
     if (T == []u8) @compileError("use []const u8 for flag values");
 
     switch (@typeInfo(T)) {
-        .int => return std.fmt.parseInt(T, v, 10) catch return Error.InvalidValue,
-        .float => return std.fmt.parseFloat(T, v) catch return Error.InvalidValue,
-        .@"enum" => return std.meta.stringToEnum(T, v) orelse Error.InvalidValue,
+        .int => return std.fmt.parseInt(T, v, 10) catch return error.InvalidValue,
+        .float => return std.fmt.parseFloat(T, v) catch return error.InvalidValue,
+        .@"enum" => return std.meta.stringToEnum(T, v) orelse error.InvalidValue,
         else => @compileError("Unsupported flag type: " ++ @typeName(T)),
     }
 }
 
 /// Parse a boolean string value; accepts "true" or "false" only.
-fn parse_bool(value: []const u8) Error!bool {
+fn parse_bool(value: []const u8) !bool {
     if (std.mem.eql(u8, value, "true")) return true;
     if (std.mem.eql(u8, value, "false")) return false;
-    return Error.InvalidValue;
+    return error.InvalidValue;
 }
 
 /// Parse a subcommand field as either a struct or nested union(enum).
@@ -245,7 +231,7 @@ fn parse_commands(allocator: std.mem.Allocator, args: []const []const u8, compti
     const fields = std.meta.fields(T);
 
     if (args.len == 0) {
-        return Error.MissingSubcommand;
+        return error.MissingSubcommand;
     }
 
     const arg = args[0];
@@ -260,7 +246,7 @@ fn parse_commands(allocator: std.mem.Allocator, args: []const []const u8, compti
         }
     }
 
-    return Error.UnknownSubcommand;
+    return error.UnknownSubcommand;
 }
 
 /// Return true if the type is a slice type (not []const u8 which is a string).
@@ -313,7 +299,7 @@ test "invalid flag" {
         name: []const u8 = "joe",
     };
 
-    try std.testing.expectError(Error.UnexpectedArgument, parse(allocator, &.{ "prog", "name=jack" }, Args));
+    try std.testing.expectError(error.UnexpectedArgument, parse(allocator, &.{ "prog", "name=jack" }, Args));
 }
 
 test "parse defaults" {
@@ -474,7 +460,7 @@ test "missing subcommand" {
         },
     };
 
-    try std.testing.expectError(Error.MissingSubcommand, parse(allocator, &.{"prog"}, CLI));
+    try std.testing.expectError(error.MissingSubcommand, parse(allocator, &.{"prog"}, CLI));
 }
 
 test "unknown subcommand" {
@@ -488,7 +474,7 @@ test "unknown subcommand" {
         },
     };
 
-    try std.testing.expectError(Error.UnknownSubcommand, parse(allocator, &.{ "prog", "restart" }, CLI));
+    try std.testing.expectError(error.UnknownSubcommand, parse(allocator, &.{ "prog", "restart" }, CLI));
 }
 
 test "duplicate flag" {
@@ -497,7 +483,7 @@ test "duplicate flag" {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.DuplicateFlag, parse(allocator, &.{ "prog", "--port=8080", "--port=9090" }, Args));
+    try std.testing.expectError(error.DuplicateFlag, parse(allocator, &.{ "prog", "--port=8080", "--port=9090" }, Args));
 }
 
 test "missing value" {
@@ -506,7 +492,7 @@ test "missing value" {
         name: []const u8,
     };
 
-    try std.testing.expectError(Error.MissingValue, parse(allocator, &.{ "prog", "--name" }, Args));
+    try std.testing.expectError(error.MissingValue, parse(allocator, &.{ "prog", "--name" }, Args));
 }
 
 test "invalid enum value" {
@@ -516,7 +502,7 @@ test "invalid enum value" {
         format: Format = .json,
     };
 
-    try std.testing.expectError(Error.InvalidValue, parse(allocator, &.{ "prog", "--format=xml" }, Args));
+    try std.testing.expectError(error.InvalidValue, parse(allocator, &.{ "prog", "--format=xml" }, Args));
 }
 
 test "invalid int value" {
@@ -525,7 +511,7 @@ test "invalid int value" {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.InvalidValue, parse(allocator, &.{ "prog", "--port=not-a-number" }, Args));
+    try std.testing.expectError(error.InvalidValue, parse(allocator, &.{ "prog", "--port=not-a-number" }, Args));
 }
 
 test "no args provided" {
@@ -534,7 +520,7 @@ test "no args provided" {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.InvalidArgument, parse(allocator, &.{}, Args));
+    try std.testing.expectError(error.InvalidArgument, parse(allocator, &.{}, Args));
 }
 
 test "missing required flag" {
@@ -543,7 +529,7 @@ test "missing required flag" {
         name: []const u8,
     };
 
-    try std.testing.expectError(Error.MissingRequiredFlag, parse(allocator, &.{"prog"}, Args));
+    try std.testing.expectError(error.MissingRequiredFlag, parse(allocator, &.{"prog"}, Args));
 }
 
 test "help declaration exists" {
@@ -586,7 +572,7 @@ test "unexpected argument error" {
         port: u16 = 8080,
     };
 
-    try std.testing.expectError(Error.UnexpectedArgument, parse(allocator, &.{ "prog", "--port=8080", "extra" }, Args));
+    try std.testing.expectError(error.UnexpectedArgument, parse(allocator, &.{ "prog", "--port=8080", "extra" }, Args));
 }
 
 // --- Slice tests ---
@@ -702,7 +688,7 @@ test "slice invalid element" {
         ports: []const u16 = &[_]u16{},
     };
 
-    try std.testing.expectError(Error.InvalidValue, parse(allocator, &.{ "prog", "--ports=80,not_a_number" }, Args));
+    try std.testing.expectError(error.InvalidValue, parse(allocator, &.{ "prog", "--ports=80,not_a_number" }, Args));
 }
 
 test "slice single value" {
