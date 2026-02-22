@@ -126,20 +126,11 @@ fn parse_struct(allocator: std.mem.Allocator, args: []const []const u8, comptime
                     found = true;
 
                     if (comptime is_slice_type(field.type)) {
-                        if (flag_value) |fv| {
-                            // --files=a.txt,b.txt or --files=a.txt
-                            var iter = std.mem.splitScalar(u8, fv, ',');
-                            while (iter.next()) |part| {
-                                try slice_lists[field_index].append(allocator, part);
-                            }
-                        } else {
-                            // --files a.txt b.txt (space-separated)
-                            while (i + 1 < args.len) {
-                                const next = args[i + 1];
-                                if (std.mem.startsWith(u8, next, "-")) break;
-                                try slice_lists[field_index].append(allocator, next);
-                                i += 1;
-                            }
+                        const fv = flag_value orelse return Error.MissingValue;
+                        // --files=a.txt,b.txt or --files=a.txt
+                        var iter = std.mem.splitScalar(u8, fv, ',');
+                        while (iter.next()) |part| {
+                            try slice_lists[field_index].append(allocator, part);
                         }
                         counts[field_index] += 1;
                     } else {
@@ -696,20 +687,6 @@ test "slice comma separated" {
     try testing.expect(std.mem.eql(u8, result.files[2], "c.txt"));
 }
 
-test "slice space separated" {
-    const Args = struct {
-        files: []const []const u8 = &[_][]const u8{},
-    };
-
-    const result = try parse(talloc, &.{ "prog", "--files", "a.txt", "b.txt", "c.txt" }, Args);
-    defer talloc.free(result.files);
-
-    try testing.expectEqual(@as(usize, 3), result.files.len);
-    try testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
-    try testing.expect(std.mem.eql(u8, result.files[1], "b.txt"));
-    try testing.expect(std.mem.eql(u8, result.files[2], "c.txt"));
-}
-
 test "slice integer values" {
     const Args = struct {
         ports: []const u16 = &[_]u16{},
@@ -764,21 +741,6 @@ test "slice mixed with scalar flags" {
     try testing.expect(std.mem.eql(u8, result.files[1], "b.txt"));
     try testing.expect(result.verbose == true);
     try testing.expectEqual(@as(u16, 3000), result.port);
-}
-
-test "slice space separated stops at flag" {
-    const Args = struct {
-        files: []const []const u8 = &[_][]const u8{},
-        verbose: bool = false,
-    };
-
-    const result = try parse(talloc, &.{ "prog", "--files", "a.txt", "b.txt", "--verbose" }, Args);
-    defer talloc.free(result.files);
-
-    try testing.expectEqual(@as(usize, 2), result.files.len);
-    try testing.expect(std.mem.eql(u8, result.files[0], "a.txt"));
-    try testing.expect(std.mem.eql(u8, result.files[1], "b.txt"));
-    try testing.expect(result.verbose == true);
 }
 
 test "slice comma separated integers" {
