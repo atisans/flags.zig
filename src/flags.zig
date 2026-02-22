@@ -297,7 +297,6 @@ fn print_help(comptime T: type) noreturn {
 // Tests
 // =============================================================================
 
-const testing = std.testing;
 const talloc = std.testing.allocator;
 
 test "auto help generation" {
@@ -561,16 +560,6 @@ test "complex subcommand structure" {
     const result = try parse(talloc, &.{ "prog", "server", "start", "--port=9090" }, CLI);
     try std.testing.expect(std.mem.eql(u8, result.server.start.host, "0.0.0.0"));
     try std.testing.expect(result.server.start.port == 9090);
-    // switch (result) {
-    //     .server => |s| switch (s) {
-    //         .start => |start| {
-    //             try std.testing.expect(std.mem.eql(u8, start.host, "0.0.0.0"));
-    //             try std.testing.expect(start.port == 9090);
-    //         },
-    //         else => unreachable,
-    //     },
-    //     else => unreachable,
-    // }
 }
 
 test "unexpected argument error" {
