@@ -72,7 +72,7 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
     }
 
     var result: T = undefined;
-    var counts = std.mem.zeroes([named_fields.len]u8);
+    var seen = std.mem.zeroes([named_fields.len]bool);
     var positional_index: usize = 0;
     var positional_only = false;
 
@@ -107,9 +107,9 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
             inline for (named_fields, 0..) |field, field_index| {
                 if (std.mem.eql(u8, flag_name, field.name)) {
                     found = true;
-                    if (counts[field_index] > 0) return Error.DuplicateFlag;
+                    if (seen[field_index]) return Error.DuplicateFlag;
 
-                    counts[field_index] += 1;
+                    seen[field_index] = true;
                     @field(result, field.name) = try parse_value(field.type, flag_value);
                     break;
                 }
@@ -127,8 +127,8 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
                 inline for (named_fields, 0..) |field, field_index| {
                     if (field.name.len == 1 and std.mem.eql(u8, flag_char, field.name)) {
                         found = true;
-                        if (counts[field_index] > 0) return Error.DuplicateFlag;
-                        counts[field_index] += 1;
+                        if (seen[field_index]) return Error.DuplicateFlag;
+                        seen[field_index] = true;
                         @field(result, field.name) = try parse_value(field.type, null);
                         break;
                     }
@@ -152,7 +152,7 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
 
     // Apply defaults and validate required flags.
     inline for (named_fields, 0..) |field, field_index| {
-        if (counts[field_index] == 0) {
+        if (!seen[field_index]) {
             try apply_default(field, &result, Error.MissingRequiredFlag);
         }
     }
