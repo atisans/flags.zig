@@ -72,6 +72,8 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
         }
     }
 
+    const has_subcommands = comptime has_subcommand_fields(named_fields);
+
     var result: T = undefined;
     var counts = std.mem.zeroes([named_fields.len]u8);
     var positional_index: usize = 0;
@@ -106,6 +108,7 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
 
             var found = false;
             inline for (named_fields, 0..) |field, field_index| {
+                if (comptime is_subcommand_field(field)) continue;
                 if (std.mem.eql(u8, flag_name, field.name)) {
                     found = true;
                     if (counts[field_index] > 0) return Error.DuplicateFlag;
@@ -126,6 +129,7 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
                 const flag_char = arg[1..2];
                 var found = false;
                 inline for (named_fields, 0..) |field, field_index| {
+                    if (comptime is_subcommand_field(field)) continue;
                     if (field.name.len == 1 and std.mem.eql(u8, flag_char, field.name)) {
                         found = true;
                         if (counts[field_index] > 0) return Error.DuplicateFlag;
@@ -141,7 +145,32 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
 
         if (std.mem.startsWith(u8, arg, "-")) return Error.UnexpectedArgument;
 
-        if (positional_fields.len == 0) return Error.UnexpectedArgument;
+        // Check for subcommand match in hybrid structs.
+        if (comptime has_subcommands) {
+            var subcmd_matched = false;
+            inline for (named_fields, 0..) |field, field_index| {
+                if (comptime is_subcommand_field(field)) {
+                    if (std.mem.eql(u8, arg, field.name)) {
+                        if (counts[field_index] > 0) return Error.DuplicateFlag;
+                        counts[field_index] += 1;
+                        const SubT = unwrap_optional(field.type);
+                        const parsed = try parse_struct_subcommand(SubT, args[i + 1 ..]);
+                        if (comptime is_optional(field.type)) {
+                            @field(result, field.name) = @as(field.type, parsed);
+                        } else {
+                            @field(result, field.name) = parsed;
+                        }
+                        subcmd_matched = true;
+                        break;
+                    }
+                }
+            }
+            if (subcmd_matched) break;
+        }
+
+        if (positional_fields.len == 0) {
+            return if (comptime has_subcommands) Error.UnknownSubcommand else Error.UnexpectedArgument;
+        }
 
         if (positional_index >= positional_fields.len) return Error.UnexpectedArgument;
 
@@ -151,10 +180,11 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
         positional_only = true;
     }
 
-    // Apply defaults and validate required flags.
+    // Apply defaults and validate required flags/subcommands.
     inline for (named_fields, 0..) |field, field_index| {
         if (counts[field_index] == 0) {
-            try apply_default(field, &result, Error.MissingRequiredFlag);
+            const err = if (comptime is_subcommand_field(field)) Error.MissingSubcommand else Error.MissingRequiredFlag;
+            try apply_default(field, &result, err);
         }
     }
 
@@ -259,6 +289,47 @@ fn is_optional(comptime T: type) bool {
     };
 }
 
+/// Unwrap an optional type to its child, or return the type as-is.
+fn unwrap_optional(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .optional => |opt| opt.child,
+        else => T,
+    };
+}
+
+/// Check whether a struct field represents a subcommand (its type is a struct or tagged union).
+fn is_subcommand_field(comptime field: std.builtin.Type.StructField) bool {
+    const T = unwrap_optional(field.type);
+    return switch (@typeInfo(T)) {
+        .@"struct" => true,
+        .@"union" => |u| u.tag_type != null,
+        else => false,
+    };
+}
+
+/// Check whether any field in the given slice is a subcommand field.
+fn has_subcommand_fields(comptime fields: []const std.builtin.Type.StructField) bool {
+    for (fields) |field| {
+        if (is_subcommand_field(field)) return true;
+    }
+    return false;
+}
+
+/// Parse a subcommand from a struct field as either a struct or nested union(enum).
+fn parse_struct_subcommand(comptime T: type, args: []const []const u8) !T {
+    const info = @typeInfo(T);
+    return switch (info) {
+        .@"struct" => try parse_struct(args, T),
+        .@"union" => blk: {
+            if (info.@"union".tag_type == null) {
+                @compileError("subcommand types must be struct or union(enum)");
+            }
+            break :blk try parse_commands(args, T);
+        },
+        else => @compileError("subcommand types must be struct or union(enum)"),
+    };
+}
+
 /// Return true if the argument is a help flag (-h or --help).
 fn is_help_arg(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help");
@@ -284,6 +355,7 @@ fn print_generated_help(comptime T: type) void {
             std.debug.print("Options:\n", .{});
             inline for (fields) |field| {
                 comptime if (std.mem.eql(u8, field.name, "--")) continue;
+                comptime if (is_subcommand_field(field)) continue;
 
                 const type_name = @typeName(field.type);
                 if (field.defaultValue()) |default| {
@@ -314,6 +386,13 @@ fn print_generated_help(comptime T: type) void {
                         field.name,
                         type_name,
                     });
+                }
+            }
+            if (comptime has_subcommand_fields(fields)) {
+                std.debug.print("\nCommands:\n", .{});
+                inline for (fields) |field| {
+                    comptime if (!is_subcommand_field(field)) continue;
+                    std.debug.print("  {s}\n", .{field.name});
                 }
             }
         },
@@ -620,4 +699,112 @@ test "unexpected argument error" {
     };
 
     try std.testing.expectError(Error.UnexpectedArgument, parse(&.{ "prog", "--port=8080", "extra" }, Args));
+}
+
+test "hybrid struct: subcommand with flags" {
+    const Args = struct {
+        add: ?struct {
+            name: []const u8,
+        } = null,
+        list: bool = false,
+    };
+
+    // Subcommand path: prog add --name="buy milk"
+    const result1 = try parse(&.{ "prog", "add", "--name=buy milk" }, Args);
+    try std.testing.expect(result1.add != null);
+    try std.testing.expect(std.mem.eql(u8, result1.add.?.name, "buy milk"));
+    try std.testing.expect(result1.list == false);
+
+    // Flag path: prog --list
+    const result2 = try parse(&.{ "prog", "--list" }, Args);
+    try std.testing.expect(result2.add == null);
+    try std.testing.expect(result2.list == true);
+}
+
+test "hybrid struct: flags before subcommand" {
+    const Args = struct {
+        add: ?struct {
+            name: []const u8,
+        } = null,
+        verbose: bool = false,
+    };
+
+    const result = try parse(&.{ "prog", "--verbose", "add", "--name=task1" }, Args);
+    try std.testing.expect(result.verbose == true);
+    try std.testing.expect(result.add != null);
+    try std.testing.expect(std.mem.eql(u8, result.add.?.name, "task1"));
+}
+
+test "hybrid struct: no subcommand given" {
+    const Args = struct {
+        add: ?struct {
+            name: []const u8,
+        } = null,
+        list: bool = false,
+    };
+
+    const result = try parse(&.{"prog"}, Args);
+    try std.testing.expect(result.add == null);
+    try std.testing.expect(result.list == false);
+}
+
+test "hybrid struct: unknown subcommand" {
+    const Args = struct {
+        add: ?struct {
+            name: []const u8,
+        } = null,
+        list: bool = false,
+    };
+
+    try std.testing.expectError(Error.UnknownSubcommand, parse(&.{ "prog", "remove" }, Args));
+}
+
+test "hybrid struct: subcommand with defaults" {
+    const Args = struct {
+        start: ?struct {
+            host: []const u8 = "localhost",
+            port: u16 = 8080,
+        } = null,
+        verbose: bool = false,
+    };
+
+    const result = try parse(&.{ "prog", "start" }, Args);
+    try std.testing.expect(result.start != null);
+    try std.testing.expect(std.mem.eql(u8, result.start.?.host, "localhost"));
+    try std.testing.expect(result.start.?.port == 8080);
+}
+
+test "hybrid struct: subcommand with nested union" {
+    const Args = struct {
+        server: ?union(enum) {
+            start: struct {
+                port: u16 = 8080,
+            },
+            stop: struct {
+                force: bool = false,
+            },
+        } = null,
+        verbose: bool = false,
+    };
+
+    const result = try parse(&.{ "prog", "--verbose", "server", "start", "--port=3000" }, Args);
+    try std.testing.expect(result.verbose == true);
+    try std.testing.expect(result.server != null);
+    try std.testing.expect(result.server.?.start.port == 3000);
+}
+
+test "hybrid struct: required subcommand" {
+    const Args = struct {
+        action: struct {
+            name: []const u8 = "default",
+        },
+        verbose: bool = false,
+    };
+
+    // When subcommand is provided
+    const result = try parse(&.{ "prog", "action", "--name=test" }, Args);
+    try std.testing.expect(std.mem.eql(u8, result.action.name, "test"));
+
+    // When required subcommand is missing
+    try std.testing.expectError(Error.MissingSubcommand, parse(&.{"prog"}, Args));
 }
