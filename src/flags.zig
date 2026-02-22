@@ -47,14 +47,10 @@ fn apply_default(comptime field: std.builtin.Type.StructField, result: anytype, 
 
 /// Find the index of the '@"--"' field that separates flags from positionals.
 fn separator_index(comptime fields: []const std.builtin.Type.StructField) ?usize {
-    var idx: ?usize = null;
     inline for (fields, 0..) |field, index| {
-        if (std.mem.eql(u8, field.name, "--")) {
-            idx = index;
-            break;
-        }
+        if (std.mem.eql(u8, field.name, "--")) return index;
     }
-    return idx;
+    return null;
 }
 
 /// Parse a struct schema of named flags and optional positional args.
@@ -173,13 +169,10 @@ fn parse_struct(args: []const []const u8, comptime T: type) !T {
 
 /// Unwrap optional types before parsing the inner scalar value.
 fn parse_value(comptime T: type, value: ?[]const u8) !T {
-    return switch (@typeInfo(T)) {
-        .optional => |opt| blk: {
-            const parsed = try parse_scalar(opt.child, value);
-            break :blk @as(T, parsed);
-        },
-        else => parse_scalar(T, value),
-    };
+    if (@typeInfo(T) == .optional) {
+        return try parse_scalar(@typeInfo(T).optional.child, value);
+    }
+    return parse_scalar(T, value);
 }
 
 /// Parse a scalar type: bool, int, float, enum, or string.
