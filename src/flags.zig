@@ -1,5 +1,4 @@
-/// Type-driven CLI parser for flags, list flags, subcommands,
-/// positional args, generated help text, and error context.
+/// Command-line parser for flags, lists, subcommands, positionals, and help.
 const std = @import("std");
 
 /// Error context from `parse`. The caller inspects this to render messages and
@@ -9,20 +8,20 @@ pub const Diagnostic = struct {
     token: ?[]const u8 = null,
     /// Human-readable message for a parse error, if any.
     message: ?[]const u8 = null,
-    /// Comptime-generated usage text, set on error.HelpRequested.
+    /// Generated usage text, set on error.HelpRequested.
     usage: ?[]const u8 = null,
 
     /// Print usage (if set) or the error message to stderr.
     pub fn report(self: Diagnostic) void {
-        if (self.usage) |u| {
-            std.debug.print("{s}\n", .{u});
+        if (self.usage) |usage_text| {
+            std.debug.print("{s}\n", .{usage_text});
             return;
         }
-        if (self.message) |m| {
-            if (self.token) |t| {
-                std.debug.print("error: {s}: {s}\n", .{ m, t });
+        if (self.message) |message| {
+            if (self.token) |token| {
+                std.debug.print("error: {s}: {s}\n", .{ message, token });
             } else {
-                std.debug.print("error: {s}\n", .{m});
+                std.debug.print("error: {s}\n", .{message});
             }
         }
     }
@@ -32,7 +31,8 @@ pub const Diagnostic = struct {
 ///
 /// Caller passes full argv; the parser skips argv[0] (the program name).
 ///
-/// Allocator is an arena owned by the caller; the parser never frees and never exits.
+/// Allocator is an arena owned by the caller; parsed string slices and list
+/// storage are copied into it. The parser never frees and never exits.
 /// Pass a `*Diagnostic` to receive structured error context or usage text on
 /// `error.HelpRequested`.
 ///
@@ -44,6 +44,7 @@ pub fn parse(
     comptime T: type,
     diag: *Diagnostic,
 ) !T {
+    diag.* = .{};
     if (args.len == 0) {
         diag.message = "no arguments provided";
         return error.EmptyArgs;
@@ -104,21 +105,23 @@ fn parse_flags(allocator: std.mem.Allocator, args: []const []const u8, comptime 
     var positional_index: usize = 0;
 
     var list_values: [named_fields.len]std.ArrayList([]const u8) = undefined;
-    // Init everything. Unused slots stay empty, no undefined footgun.
-    // Waste is trivial, a couple dozen bytes per non-list field.
-    inline for (&list_values) |*lv| lv.* = .empty;
+    // Keep every slot initialized. Only list fields use these values.
+    inline for (&list_values) |*list_value| list_value.* = .empty;
+    defer {
+        inline for (&list_values) |*list_value| list_value.deinit(allocator);
+    }
 
     var positional_only = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
 
-        if (is_help_flag(arg)) {
-            diag.usage = comptime usage(T);
-            return error.HelpRequested;
-        }
-
         if (!positional_only) {
+            if (is_help_flag(arg)) {
+                diag.usage = comptime usage(T);
+                return error.HelpRequested;
+            }
+
             if (std.mem.eql(u8, arg, "--")) {
                 positional_only = true;
                 continue;
@@ -155,9 +158,12 @@ fn parse_flags(allocator: std.mem.Allocator, args: []const []const u8, comptime 
                                 return error.DuplicateFlag;
                             }
                             seen[field_index] = true;
-                            @field(result, field.name) = parse_value(field.type, flag_value) catch |e| {
+                            @field(result, field.name) = parse_value(allocator, field.type, flag_value) catch |e| {
                                 diag.token = arg;
-                                diag.message = comptime "invalid value for --" ++ field.name ++ ", expected " ++ type_label(field.type);
+                                diag.message = if (e == error.MissingValue)
+                                    "missing value"
+                                else
+                                    comptime "invalid value for --" ++ field.name ++ ", expected " ++ type_label(field.type);
                                 return e;
                             };
                         }
@@ -203,9 +209,9 @@ fn parse_flags(allocator: std.mem.Allocator, args: []const []const u8, comptime 
 
         inline for (positional_fields, 0..) |pfield, pi| {
             if (pi == positional_index) {
-                @field(result, pfield.name) = parse_value(pfield.type, arg) catch |e| {
+                @field(result, pfield.name) = parse_value(allocator, pfield.type, arg) catch |e| {
                     diag.token = arg;
-                    diag.message = "invalid value";
+                    diag.message = if (e == error.MissingValue) "missing value" else "invalid value";
                     return e;
                 };
             }
@@ -213,7 +219,6 @@ fn parse_flags(allocator: std.mem.Allocator, args: []const []const u8, comptime 
         positional_index += 1;
     }
 
-    // Build slices and apply defaults for named fields.
     inline for (named_fields, 0..) |field, field_index| {
         if (comptime subcommand_info(field.type) != null) {
             if (!seen[field_index]) {
@@ -228,7 +233,7 @@ fn parse_flags(allocator: std.mem.Allocator, args: []const []const u8, comptime 
                 const child = comptime @typeInfo(field.type).pointer.child;
                 const typed = try allocator.alloc(child, items.len);
                 for (items, 0..) |raw, j| {
-                    typed[j] = try parse_scalar(child, raw);
+                    typed[j] = try parse_scalar(allocator, child, raw);
                 }
                 @field(result, field.name) = typed;
             } else {
@@ -251,7 +256,6 @@ fn parse_flags(allocator: std.mem.Allocator, args: []const []const u8, comptime 
         }
     }
 
-    // Apply defaults for missing positional args.
     inline for (positional_fields, 0..) |pfield, pi| {
         if (pi >= positional_index) {
             set_default_or_null(pfield, &result, error.MissingRequiredPositional) catch |err| {
@@ -271,22 +275,22 @@ fn type_label(comptime T: type) []const u8 {
         .float => @typeName(T),
         .bool => "bool",
         .@"enum" => @typeName(T),
-        .optional => |o| type_label(o.child),
-        .pointer => |p| if (p.size == .slice and p.child == u8) "string" else @typeName(T),
+        .optional => |optional_info| type_label(optional_info.child),
+        .pointer => |pointer_info| if (pointer_info.size == .slice and pointer_info.child == u8) "string" else @typeName(T),
         else => @typeName(T),
     };
 }
 
 /// Unwrap optional types before parsing the inner scalar value.
-fn parse_value(comptime T: type, value: ?[]const u8) !T {
+fn parse_value(allocator: std.mem.Allocator, comptime T: type, value: ?[]const u8) !T {
     if (@typeInfo(T) == .optional) {
-        return try parse_scalar(@typeInfo(T).optional.child, value);
+        return try parse_scalar(allocator, @typeInfo(T).optional.child, value);
     }
-    return parse_scalar(T, value);
+    return parse_scalar(allocator, T, value);
 }
 
 /// Parse a scalar type: bool, int, float, enum, or string.
-fn parse_scalar(comptime T: type, value: ?[]const u8) !T {
+fn parse_scalar(allocator: std.mem.Allocator, comptime T: type, value: ?[]const u8) !T {
     if (T == bool) {
         if (value == null) return true;
         return parse_bool(value.?);
@@ -294,7 +298,7 @@ fn parse_scalar(comptime T: type, value: ?[]const u8) !T {
 
     const v = value orelse return error.MissingValue;
 
-    if (T == []const u8) return v;
+    if (T == []const u8) return try allocator.dupe(u8, v);
     if (T == []u8) @compileError("use []const u8 for flag values");
 
     switch (@typeInfo(T)) {
@@ -376,19 +380,18 @@ fn is_repeatable(comptime T: type) bool {
 /// The field may be a bare union(enum) (required) or an optional one (optional).
 const SubcommandInfo = struct {
     union_type: type,
-    is_optional: bool,
 };
 
 /// If T is a tagged union (possibly wrapped in optional), return SubcommandInfo.
 fn subcommand_info(comptime T: type) ?SubcommandInfo {
     return switch (@typeInfo(T)) {
-        .@"union" => |u| if (u.tag_type != null)
-            .{ .union_type = T, .is_optional = false }
+        .@"union" => |union_info| if (union_info.tag_type != null)
+            .{ .union_type = T }
         else
             null,
         .optional => |o| switch (@typeInfo(o.child)) {
-            .@"union" => |u| if (u.tag_type != null)
-                .{ .union_type = o.child, .is_optional = true }
+            .@"union" => |union_info| if (union_info.tag_type != null)
+                .{ .union_type = o.child }
             else
                 null,
             else => null,
@@ -418,10 +421,6 @@ fn is_help_flag(arg: []const u8) bool {
 /// otherwise generates it at comptime.
 pub fn usage(comptime T: type) []const u8 {
     if (@hasDecl(T, "help")) return T.help;
-    return render_usage(T);
-}
-
-fn render_usage(comptime T: type) []const u8 {
     return comptime switch (@typeInfo(T)) {
         .@"struct" => generate_struct_usage(T),
         .@"union" => generate_union_usage(T),
@@ -442,7 +441,7 @@ fn generate_struct_usage(comptime T: type) []const u8 {
             if (marker_idx) |idx| {
                 if (i > idx) {
                     positionals_text = positionals_text ++ "  " ++ field.name ++ "  " ++
-                        @typeName(field.type) ++ default_label(field) ++ "\n";
+                        type_label(field.type) ++ default_label(field) ++ "\n";
                     continue;
                 }
             }
@@ -453,8 +452,8 @@ fn generate_struct_usage(comptime T: type) []const u8 {
                     commands_text = commands_text ++ "  " ++ variant.name ++ "\n";
                 }
             } else {
-                flags_text = flags_text ++ "  --" ++ field.name ++ "  " ++
-                    @typeName(field.type) ++ default_label(field) ++ "\n";
+                flags_text = flags_text ++ "  " ++ flag_syntax(field) ++ "  " ++
+                    type_label(field.type) ++ default_label(field) ++ "\n";
             }
         }
 
@@ -464,6 +463,15 @@ fn generate_struct_usage(comptime T: type) []const u8 {
         if (positionals_text.len > 0) out = out ++ "Positionals:\n" ++ positionals_text;
         break :blk out;
     };
+}
+
+fn flag_syntax(comptime field: std.builtin.Type.StructField) []const u8 {
+    const value_type = switch (@typeInfo(field.type)) {
+        .optional => |optional_info| optional_info.child,
+        else => field.type,
+    };
+    const value_suffix = if (value_type == bool) "[=true|false]" else "=<value>";
+    return "--" ++ field.name ++ value_suffix;
 }
 
 fn generate_union_usage(comptime T: type) []const u8 {
@@ -479,8 +487,8 @@ fn generate_union_usage(comptime T: type) []const u8 {
 fn default_label(comptime field: std.builtin.Type.StructField) []const u8 {
     if (@typeInfo(field.type) == .optional) return " (optional)";
     if (is_repeatable(field.type)) return " (repeatable)";
-    if (field.defaultValue()) |d| {
-        return " (default: " ++ value_to_string(field.type, d) ++ ")";
+    if (field.defaultValue()) |default_value| {
+        return " (default: " ++ value_to_string(field.type, default_value) ++ ")";
     }
     return " (required)";
 }
@@ -493,10 +501,6 @@ fn value_to_string(comptime T: type, comptime v: T) []const u8 {
         else => std.fmt.comptimePrint("{}", .{v}),
     };
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 const TestArena = struct {
     arena: std.heap.ArenaAllocator,
@@ -573,11 +577,11 @@ test "auto usage for flag struct" {
     };
     try std.testing.expectEqualStrings(
         \\Flags:
-        \\  --name  []const u8 (default: joe)
-        \\  --port  u16 (default: 8080)
-        \\  --verbose  bool (default: false)
-        \\  --config  ?[]const u8 (optional)
-        \\  --host  []const u8 (required)
+        \\  --name=<value>  string (default: joe)
+        \\  --port=<value>  u16 (default: 8080)
+        \\  --verbose[=true|false]  bool (default: false)
+        \\  --config=<value>  string (optional)
+        \\  --host=<value>  string (required)
         \\
     , comptime usage(Args));
 }
@@ -599,7 +603,7 @@ test "auto usage with flags and commands" {
     };
     try std.testing.expectEqualStrings(
         \\Flags:
-        \\  --verbose  bool (default: false)
+        \\  --verbose[=true|false]  bool (default: false)
         \\Commands:
         \\  serve
         \\  stop
@@ -625,25 +629,28 @@ test "parse_scalar table" {
         .{ bool, "false", false },
         .{ Color, "green", Color.green },
     }) |row| {
-        try std.testing.expectEqual(row[2], try parse_scalar(row[0], row[1]));
+        try std.testing.expectEqual(row[2], try parse_scalar(std.testing.allocator, row[0], row[1]));
     }
 }
 
-test "auto help generation" {
+test "parsed strings do not borrow argv storage" {
+    var ta = TestArena.init();
+    defer ta.deinit();
+
     const Args = struct {
-        name: []const u8 = "joe",
-        port: u16 = 8080,
-        active: bool = false,
+        name: []const u8,
+        files: []const []const u8 = &.{},
     };
+    var name_arg = [_]u8{ '-', '-', 'n', 'a', 'm', 'e', '=', 'a', 'l', 'i', 'c', 'e' };
+    var file_arg = [_]u8{ '-', '-', 'f', 'i', 'l', 'e', 's', '=', 'a', '.', 't', 'x', 't' };
+    const argv = [_][]const u8{ "prog", &name_arg, &file_arg };
 
-    try std.testing.expectEqual(false, @hasDecl(Args, "help"));
+    const result = try ta.run(Args, &argv);
+    name_arg[7] = 'x';
+    file_arg[8] = 'b';
 
-    const Args2 = struct {
-        verbose: bool = false,
-        pub const help = "Usage: myapp";
-    };
-    try std.testing.expectEqual(true, @hasDecl(Args2, "help"));
-    try std.testing.expectEqualStrings("Usage: myapp", Args2.help);
+    try std.testing.expectEqualStrings("alice", result.name);
+    try std.testing.expectEqualStrings("a.txt", result.files[0]);
 }
 
 test "bare argument rejected without positionals" {
@@ -820,6 +827,34 @@ test "missing value" {
     defer ta.deinit();
     const Args = struct { name: []const u8 };
     try std.testing.expectError(error.MissingValue, ta.run(Args, &.{ "prog", "--name" }));
+    try std.testing.expectEqualStrings("missing value", ta.diag.message.?);
+}
+
+test "terminator disables help parsing" {
+    var ta = TestArena.init();
+    defer ta.deinit();
+    const Args = struct {
+        @"--": void,
+        value: []const u8,
+    };
+    const result = try ta.run(Args, &.{ "prog", "--", "--help" });
+    try std.testing.expectEqualStrings("--help", result.value);
+
+    const short_result = try ta.run(Args, &.{ "prog", "--", "-h" });
+    try std.testing.expectEqualStrings("-h", short_result.value);
+}
+
+test "diagnostic resets between parses" {
+    var ta = TestArena.init();
+    defer ta.deinit();
+    const Args = struct { name: []const u8 };
+
+    try std.testing.expectError(error.UnknownFlag, ta.run(Args, &.{ "prog", "--nope=x" }));
+    try std.testing.expectEqualStrings("--nope=x", ta.diag.token.?);
+
+    try std.testing.expectError(error.MissingRequiredFlag, ta.run(Args, &.{"prog"}));
+    try std.testing.expect(ta.diag.token == null);
+    try std.testing.expectEqualStrings("missing required flag: --name", ta.diag.message.?);
 }
 
 test "invalid enum value" {
@@ -875,8 +910,6 @@ test "unexpected argument error" {
     try std.testing.expectError(error.UnexpectedArgument, ta.run(Args, &.{ "prog", "--port=8080", "extra" }));
 }
 
-// --- Slice tests ---
-
 test "list repeated flags" {
     var ta = TestArena.init();
     defer ta.deinit();
@@ -895,16 +928,6 @@ test "list does not split on commas" {
     const result = try ta.run(Args, &.{ "prog", "--files=a.txt,b.txt" });
     try std.testing.expectEqual(1, result.files.len);
     try std.testing.expectEqualStrings("a.txt,b.txt", result.files[0]);
-}
-
-test "list integer values repeated" {
-    var ta = TestArena.init();
-    defer ta.deinit();
-    const Args = struct { ports: []const u16 = &.{} };
-    const result = try ta.run(Args, &.{ "prog", "--ports=80", "--ports=443" });
-    try std.testing.expectEqual(2, result.ports.len);
-    try std.testing.expectEqual(80, result.ports[0]);
-    try std.testing.expectEqual(443, result.ports[1]);
 }
 
 test "list integer values" {
@@ -930,14 +953,6 @@ test "list enum values" {
     try std.testing.expectEqual(Format.toml, result.formats[2]);
 }
 
-test "list with default" {
-    var ta = TestArena.init();
-    defer ta.deinit();
-    const Args = struct { files: []const []const u8 = &.{} };
-    const result = try ta.run(Args, &.{"prog"});
-    try std.testing.expectEqual(0, result.files.len);
-}
-
 test "list mixed with scalar flags" {
     var ta = TestArena.init();
     defer ta.deinit();
@@ -959,22 +974,6 @@ test "list invalid element" {
     defer ta.deinit();
     const Args = struct { ports: []const u16 = &.{} };
     try std.testing.expectError(error.InvalidValue, ta.run(Args, &.{ "prog", "--ports=80", "--ports=bad" }));
-}
-
-test "multiple list fields" {
-    var ta = TestArena.init();
-    defer ta.deinit();
-    const Args = struct {
-        files: []const []const u8 = &.{},
-        ports: []const u16 = &.{},
-    };
-    const result = try ta.run(Args, &.{ "prog", "--files=a.txt", "--files=b.txt", "--ports=80", "--ports=443" });
-    try std.testing.expectEqual(2, result.files.len);
-    try std.testing.expectEqualStrings("a.txt", result.files[0]);
-    try std.testing.expectEqualStrings("b.txt", result.files[1]);
-    try std.testing.expectEqual(2, result.ports.len);
-    try std.testing.expectEqual(80, result.ports[0]);
-    try std.testing.expectEqual(443, result.ports[1]);
 }
 
 test "global flags with subcommand" {
@@ -1069,18 +1068,6 @@ test "optional subcommand absent is null" {
     try std.testing.expectEqual(@as(@TypeOf(result.command), null), result.command);
 }
 
-test "optional subcommand bare (no args) is null" {
-    var ta = TestArena.init();
-    defer ta.deinit();
-    const CLI = struct {
-        command: ?union(enum) {
-            serve: struct { port: u16 = 8080 },
-        } = null,
-    };
-    const result = try ta.run(CLI, &.{"prog"});
-    try std.testing.expectEqual(@as(@TypeOf(result.command), null), result.command);
-}
-
 test "optional subcommand with void variant" {
     var ta = TestArena.init();
     defer ta.deinit();
@@ -1115,7 +1102,7 @@ test "auto usage lists optional subcommand commands" {
     };
     try std.testing.expectEqualStrings(
         \\Flags:
-        \\  --verbose  bool (default: false)
+        \\  --verbose[=true|false]  bool (default: false)
         \\Commands:
         \\  serve
         \\  stop
@@ -1136,8 +1123,6 @@ test "subcommand with nested union" {
     try std.testing.expectEqual(true, result.verbose);
     try std.testing.expectEqual(3000, result.command.server.start.port);
 }
-
-// --- Positional tests ---
 
 test "positional basic" {
     var ta = TestArena.init();
@@ -1200,8 +1185,6 @@ test "positional inside subcommand" {
     try std.testing.expectEqualStrings("a.out", result.command.compile.output);
 }
 
-// --- List field tests ---
-
 test "list fields parse correctly" {
     var ta = TestArena.init();
     defer ta.deinit();
@@ -1229,31 +1212,4 @@ test "subcommand with list fields" {
     const result = try ta.run(CLI, &.{ "prog", "--verbose", "serve", "--hosts=a.com", "--hosts=b.com" });
     try std.testing.expectEqual(true, result.verbose);
     try std.testing.expectEqual(2, result.command.serve.hosts.len);
-}
-
-test "list fields with defaults only" {
-    var ta = TestArena.init();
-    defer ta.deinit();
-    const Args = struct {
-        files: []const []const u8 = &.{},
-        ports: []const u16 = &.{},
-        name: []const u8 = "default",
-    };
-    const result = try ta.run(Args, &.{"prog"});
-    try std.testing.expectEqual(0, result.files.len);
-    try std.testing.expectEqual(0, result.ports.len);
-}
-
-test "list_values array with non-list and list fields" {
-    var ta = TestArena.init();
-    defer ta.deinit();
-    const Args = struct {
-        verbose: bool = false,
-        files: []const []const u8 = &.{},
-        name: []const u8 = "default",
-    };
-    const result = try ta.run(Args, &.{ "prog", "--files=a.txt", "--files=b.txt", "--name=test" });
-    try std.testing.expectEqual(false, result.verbose);
-    try std.testing.expectEqual(2, result.files.len);
-    try std.testing.expectEqualSlices(u8, result.name, "test");
 }

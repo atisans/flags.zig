@@ -2,7 +2,7 @@
 
 A type-safe command-line argument parser for Zig. Inspired by **Rust clap** and **TigerBeetle's flags**, it lets you define flags using a struct or union(enum) and parses command-line arguments into it.
 
-- Zero runtime overhead. Parsing happens at comptime where possible.
+- Comptime-driven schema. Argument scanning and value conversion happen at runtime.
 - Type safety. Catch errors at compile time, not runtime.
 - Idiomatic Zig. Works with the grain of the language.
 - Zero external dependencies.
@@ -34,7 +34,7 @@ const flags = b.dependency("flags", .{});
 exe.root_module.addImport("flags", flags.module("flags"));
 ```
 
-## Quick Start
+## Quick start
 
 ```zig
 const std = @import("std");
@@ -44,7 +44,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
 
-    // Define flags as a struct
+    // Define the command-line schema.
     const Args = struct {
         name: []const u8 = "world",
         age: u32 = 25,
@@ -64,17 +64,21 @@ pub fn main(init: std.process.Init) !void {
 }
 ```
 
+Parsed string values and list storage are copied into the supplied arena. The
+argument slice may be discarded after `parse`; keep the arena alive while using
+the parsed result.
+
 ```bash
 ./program --name=alice --age=30 --active
 ./program --files=a.txt --files=b.txt --files=c.txt
 ./program --help
 ```
 
-## Advanced Features
+## Advanced features
 
-### Help Documentation
+### Help text
 
-Running with `-h` or `--help` prints auto-generated usage text derived from your schema type. Help is auto-generated at comptime, so it always reflects the actual flag names and types.
+Running with `-h` or `--help` prints auto-generated usage text derived from your schema type. Help is generated at comptime, so it reflects the actual flag names and types. Non-boolean values use `--name=value`; booleans accept either `--verbose` or `--verbose=true|false`.
 
 If a type declares `pub const help`, that string overrides auto-generation:
 
@@ -117,7 +121,7 @@ switch (cli) {
 }
 ```
 
-### Global Flags with Subcommands
+### Global flags with subcommands
 
 Combine top-level flags with subcommands using a struct that contains a `union(enum)`:
 
@@ -153,7 +157,7 @@ prog --verbose serve --port=3000
 prog --config=app.toml migrate --dry_run
 ```
 
-### Positional Arguments
+### Positional arguments
 
 Use the `@"--"` marker to separate flags from positional arguments:
 
@@ -173,7 +177,7 @@ Positional arguments are bare words that don't start with `-`. They can be
 interleaved with flags in any order. A bare argument starting with `-` is
 rejected (this library only supports `--name=value` flag syntax).
 
-### Optional Subcommands
+### Optional subcommands
 
 Subcommands can be made optional by wrapping the union type in `?`:
 
@@ -189,7 +193,7 @@ const CLI = struct {
 
 When the subcommand is absent, `command` is `null`.
 
-## Best Practices
+## Best practices
 
 - Use struct defaults for common values.
 - Define help with `pub const help` when you need hand-written text.
@@ -198,9 +202,9 @@ When the subcommand is absent, `command` is `null`.
 - Use optional types for truly optional flags.
 - Always handle the error from `parse`. Skipping it defeats the point.
 - Don't make every field optional. You lose the type safety that makes this approach useful.
-- Keep help text at compile time. No runtime string building.
+- Keep help text in the schema. Help generation happens at compile time.
 
-## Parser vs Application Boundary
+## Parser and application boundary
 
 The parser handles syntax; the application handles semantics. Keep these in application code:
 
@@ -208,14 +212,14 @@ The parser handles syntax; the application handles semantics. Keep these in appl
 - File I/O, encryption, network calls
 - Interactive prompts and terminal I/O
 - Output formatting and display
-- Command aliases (`t` → `task`)
+- Command aliases (`t` to `task`)
 - Configuration file loading
 
 The parser extracts typed values. What you do with them is your business.
 
 ## Not planned
 
-- **No short flags.** Only long flags (`--flag=value`), except `-h` for help. For brevity, use `--v` instead of `-v`.
+- **No short flags.** Only long flags (`--flag=value` or bare booleans), except `-h` for help. For brevity, use `--v` instead of `-v`.
 - **No custom types.** Only built-in types and enums.
 - **No nested slices.** Slices of slices not supported (`[][]T`).
 - **No comma-separated lists.** Use repeated flags (`--x=a --x=b`).
@@ -225,6 +229,6 @@ The parser extracts typed values. What you do with them is your business.
 
 ## Credits
 
-Heavily inspired by [TigerBeetle's flags](https://github.com/tigerbeetle/tigerbeetle). The struct-as-schema design, comptime parsing, arena memory model, `Diagnostic`-style error reporting, and no-short-flags philosophy all come from there.
+Heavily inspired by [TigerBeetle's flags](https://github.com/tigerbeetle/tigerbeetle). The struct-as-schema design, comptime schema and help generation, arena memory model, `Diagnostic`-style error reporting, and no-short-flags philosophy all come from there.
 
 The declarative "derive" sensibility (define a type, get a parser) was popularized by [Rust clap](https://github.com/clap-rs/clap), and that was the conceptual starting point for this project.
